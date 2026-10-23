@@ -72,14 +72,82 @@ Các thư mục con trong `outputs/` và `reports/` có ý nghĩa như sau:
 
 ## Kết quả được đưa lên GitHub
 
-`.gitignore` chỉ giữ lại các artifact tổng hợp của lần chạy đầy đủ gần nhất ngày **2026-10-24** để đọc và viết báo cáo:
+[`.gitignore`](.gitignore) dùng allowlist để chỉ công bố các kết quả tổng hợp của lần chạy đầy đủ gần nhất ngày **2026-10-24**. Repository trên GitHub được tổ chức thành bốn nhóm sau.
 
-- `reports/run_summary.md`, `reports/data_audit.*` và `reports/eda.md`.
-- Toàn bộ `reports/tables*/` và `reports/figures*/` của primary, temporal validation và hai sensitivity analyses.
-- `outputs/survival_dataset_summary.json`.
-- `model_metrics.json` của primary, temporal, CLTV và tie sensitivity.
+### Code, cấu hình và kiểm thử
 
-Các file dung lượng lớn hoặc chứa dữ liệu cấp khoản vay không được đưa lên: `survival_dataset.csv`, `test_predictions.csv`, `split_membership.csv`, model pickle và toàn bộ kết quả lịch sử trong `outputs/experiments/`. Các báo cáo ngoài allowlist của lần chạy mới nhất cũng bị loại. Chúng có thể được tạo lại bằng các lệnh bên dưới. Dữ liệu raw được quản lý riêng; `sample_perf_2015.txt` đã được cấu hình bằng Git LFS trong `.gitattributes`.
+| File hoặc thư mục | Ý nghĩa |
+|---|---|
+| [`src/survival_pipeline.py`](src/survival_pipeline.py) | Pipeline chính, gồm tạo cohort, preprocessing, hai cause-specific Cox, CIF, metric, lưu model và API dự báo. |
+| [`src/temporal_validation.py`](src/temporal_validation.py) | Temporal validation theo First Payment Date. |
+| [`src/eda.py`](src/eda.py) | Phân tích mô tả và tạo các bảng/hình EDA. |
+| [`config/analysis_config.json`](config/analysis_config.json) | Seed, split, endpoint, horizons và số bootstrap mặc định. |
+| [`tests/test_survival_pipeline.py`](tests/test_survival_pipeline.py) | Test các thành phần survival, competing risks, delayed entry, CIF và metric. |
+| [`tests/test_audit_regressions.py`](tests/test_audit_regressions.py) | Regression test cho baseline, Efron ties, sentinel, sparse AJ và preprocessing. |
+| [`requirements.txt`](requirements.txt) | Các dependency Python tối thiểu. |
+
+### Tài liệu phương pháp
+
+| File | Ý nghĩa |
+|---|---|
+| [`docs/analysis_contract.md`](docs/analysis_contract.md) | Định nghĩa đã chốt của `T`, `L`, `J`, risk set, endpoint, tie, CIF và đánh giá. |
+| [`docs/data_dictionary.md`](docs/data_dictionary.md) | Ý nghĩa các trường đầu vào và biến survival được tạo. |
+| [`docs/methodology.md`](docs/methodology.md) | Giải thích mô hình Cox, competing risks, delayed entry, CIF và metric. |
+| [`docs/provenance_data.md`](docs/provenance_data.md) | Nguồn, schema và SHA-256 của dữ liệu. |
+
+### Dữ liệu đầu vào
+
+| File | Ý nghĩa |
+|---|---|
+| [`sample_orig_2015.txt`](sample_orig_2015.txt) | Thông tin khởi tạo của 50.000 khoản vay. |
+| [`sample_perf_2015.txt`](sample_perf_2015.txt) | Lịch sử performance hằng tháng; file lớn được cấu hình Git LFS tại [`.gitattributes`](.gitattributes). |
+| [`sample_2015.zip`](sample_2015.zip) | Archive dữ liệu nguồn dùng để đối chiếu checksum. |
+
+### Kết quả của lần chạy gần nhất
+
+Các file dưới đây là kết quả được phép đưa lên GitHub. Kết quả lịch sử trong `outputs/experiments/` không thuộc allowlist.
+
+| File hoặc thư mục | Ý nghĩa |
+|---|---|
+| [`reports/run_summary.md`](reports/run_summary.md) | Tóm tắt môi trường, lệnh chạy, cohort, kết quả bốn nhánh và kiểm tra artifact. Đây là điểm bắt đầu để đọc kết quả. |
+| [`reports/data_audit.md`](reports/data_audit.md) | Báo cáo đọc được về schema, missing, mã trạng thái và cohort. |
+| [`reports/data_audit.json`](reports/data_audit.json) | Cùng thông tin audit ở dạng máy đọc được. |
+| [`reports/eda.md`](reports/eda.md) | Tóm tắt phân tích khám phá dữ liệu. |
+| [`outputs/survival_dataset_summary.json`](outputs/survival_dataset_summary.json) | Số khoản vay, biến cố, competing exits, censoring, tie và loại trừ. |
+| [`outputs/models/model_metrics.json`](outputs/models/model_metrics.json) | Metric và metadata của mô hình primary. |
+| [`outputs/models_temporal_validation/model_metrics.json`](outputs/models_temporal_validation/model_metrics.json) | Metric của temporal validation. |
+| [`outputs/models_cltv/model_metrics.json`](outputs/models_cltv/model_metrics.json) | Metric của CLTV sensitivity. |
+| [`outputs/models_tie_sensitivity/model_metrics.json`](outputs/models_tie_sensitivity/model_metrics.json) | Metric của tie sensitivity. |
+
+Các bảng kết quả được chia theo nhánh:
+
+| Thư mục | Nội dung |
+|---|---|
+| [`reports/tables/`](reports/tables/) | 19 bảng primary và EDA: hệ số/HR, baseline hazard, AJ, Brier, calibration, bootstrap và PH screening. |
+| [`reports/tables_temporal_validation/`](reports/tables_temporal_validation/) | 15 bảng của temporal validation, gồm phân bố entry theo cohort. |
+| [`reports/tables_cltv/`](reports/tables_cltv/) | 13 bảng của CLTV sensitivity. |
+| [`reports/tables_tie_sensitivity/`](reports/tables_tie_sensitivity/) | 13 bảng của tie sensitivity. |
+
+Các bảng primary thường dùng khi viết báo cáo:
+
+- [`cox_event_90plus_coefficients.csv`](reports/tables/cox_event_90plus_coefficients.csv): hệ số, hazard ratio, khoảng tin cậy và p-value của biến cố 90+.
+- [`cox_any_zero_balance_exit_coefficients.csv`](reports/tables/cox_any_zero_balance_exit_coefficients.csv): kết quả mô hình competing event.
+- [`cif_brier_scores.csv`](reports/tables/cif_brier_scores.csv): IPCW Brier theo horizon.
+- [`cif_overall_test_calibration.csv`](reports/tables/cif_overall_test_calibration.csv): CIF dự báo trung bình và CIF quan sát trên test.
+- [`test_metric_bootstrap_fixed_model.csv`](reports/tables/test_metric_bootstrap_fixed_model.csv): khoảng bootstrap của C-index và Brier.
+- [`schoenfeld_trend_approx.csv`](reports/tables/schoenfeld_trend_approx.csv): screening giả định proportional hazards.
+- [`aalen_johansen_full.csv`](reports/tables/aalen_johansen_full.csv): CIF phi tham số của toàn cohort.
+
+Các hình được chia tương ứng:
+
+| Thư mục | Nội dung |
+|---|---|
+| [`reports/figures/`](reports/figures/) | 6 hình primary và EDA. |
+| [`reports/figures_temporal_validation/`](reports/figures_temporal_validation/) | CIF và calibration của temporal validation. |
+| [`reports/figures_cltv/`](reports/figures_cltv/) | CIF và calibration của CLTV sensitivity. |
+| [`reports/figures_tie_sensitivity/`](reports/figures_tie_sensitivity/) | CIF và calibration của tie sensitivity. |
+
+Các file dung lượng lớn hoặc chứa dữ liệu cấp khoản vay không được đưa lên: `survival_dataset.csv`, `survival_dataset.exclusions.csv`, `test_predictions.csv`, `split_membership.csv`, model pickle và toàn bộ `outputs/experiments/`. Chúng có thể được tạo lại bằng các lệnh bên dưới.
 
 ## Cài đặt
 
