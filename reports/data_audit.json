@@ -1,5 +1,5 @@
 {
-  "source": "Freddie Mac SFLLD Sample 2015; physical schema matches Release 47 (July 2026)",
+  "source": "Declared Freddie Mac SFLLD Sample 2015; schema reference Release 47 (July 2026); local download provenance unverified",
   "origination": {
     "path": "D:\\cox_lendingclub_project\\sample_orig_2015.txt",
     "rows": 50000,
@@ -667,8 +667,11 @@
       "01": 19,
       "96": 1
     },
+    "loans_excluded_terminal_before_entry": 0,
+    "other_exclusion_reasons": {},
     "entry_clock_mismatch_vs_first_loan_age_unmodified": 0,
-    "zero_balance_effective_date_missing_fallback_to_report_month": 11509,
+    "zero_balance_effective_date_missing_fallback_to_report_month": 0,
+    "terminal_effective_after_last_report": 36,
     "status_row_counts": {
       "00": 3415433,
       "01": 23522,

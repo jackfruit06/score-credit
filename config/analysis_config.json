@@ -1,4 +1,5 @@
 {
+  "analysis_contract": "docs/analysis_contract.md v1 (2026-10-23)",
   "data": {
     "origination": "sample_orig_2015.txt",
     "performance": "sample_perf_2015.txt",
@@ -7,7 +8,7 @@
   },
   "endpoint": {
     "primary": "first monthly Current Loan Delinquency Status >= 03 before zero-balance termination",
-    "competing": "any first zero-balance termination, preserving original code",
+    "competing": "first dataset zero-balance termination, preserving code; not necessarily borrower debt extinguishment",
     "same_month_rule": "zero-balance termination is competing; event ordering within month is unknown",
     "secondary": "Zero Balance Code 03 or 09"
   },

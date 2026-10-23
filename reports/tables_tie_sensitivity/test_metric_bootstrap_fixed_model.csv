@@ -1,7 +1,7 @@
 metric,horizon_months,successful_replicates,bootstrap_mean,ci_2_5,ci_97_5,scope
-cif_ipcw_brier,12.0,100,0.0012098364698380115,0.0006175026814301367,0.0019038964135563348,fixed fitted models; resampled test loans only
-cif_ipcw_brier,24.0,100,0.004747435797673007,0.0036034551539439264,0.005784739733298607,fixed fitted models; resampled test loans only
-cif_ipcw_brier,36.0,100,0.009028764190281735,0.007662809345262149,0.010432930474911959,fixed fitted models; resampled test loans only
-cif_ipcw_brier,60.0,100,0.02461254688169326,0.021886506599815652,0.027462409612354993,fixed fitted models; resampled test loans only
-cif_ipcw_brier,120.0,100,0.03749144232133492,0.034095097771901936,0.04070364859955652,fixed fitted models; resampled test loans only
-left_truncated_c_index,,100,0.7552661506491632,0.7364577208136105,0.7756682600466434,fixed fitted models; resampled test loans only
+cif_ipcw_brier,12.0,20,0.0012706469612340278,0.0006619577837148789,0.0018088137063410794,giữ cố định mô hình đã fit; chỉ lấy mẫu lại khoản vay test
+cif_ipcw_brier,24.0,20,0.0046849718098446675,0.00380153616640043,0.005956089977454106,giữ cố định mô hình đã fit; chỉ lấy mẫu lại khoản vay test
+cif_ipcw_brier,36.0,20,0.009083286989115404,0.007812864190413677,0.010619243732979804,giữ cố định mô hình đã fit; chỉ lấy mẫu lại khoản vay test
+cif_ipcw_brier,60.0,20,0.02483311953711944,0.02151706056632721,0.027224857430559763,giữ cố định mô hình đã fit; chỉ lấy mẫu lại khoản vay test
+cif_ipcw_brier,120.0,20,0.03780112906426762,0.0341807529840518,0.0408051120536561,giữ cố định mô hình đã fit; chỉ lấy mẫu lại khoản vay test
+left_truncated_c_index,,20,0.7537284447740531,0.7380630807732951,0.7685300647793206,giữ cố định mô hình đã fit; chỉ lấy mẫu lại khoản vay test

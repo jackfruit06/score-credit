@@ -1,6 +1,6 @@
-# Data audit
+# Kiểm toán dữ liệu
 
-Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47 (July 2026)
+Nguồn/schema: Declared Freddie Mac SFLLD Sample 2015; schema reference Release 47 (July 2026); local download provenance unverified
 
 - Origination: 50,000 rows, 31 columns, 50,000 unique loans.
 - Performance: 3,467,166 rows, 35 columns, 50,000 unique loans.
@@ -9,11 +9,11 @@ Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47
 - Duplicate loan-month rows: 0; per-loan calendar gaps: 2 intervals across 2 loans.
 - Raw files are pipe-delimited, headerless; audit streamed rows without editing inputs.
 
-## Column missingness
+## Giá trị thiếu theo cột
 
-### Origination
+### Khởi tạo
 
-| # | Field | Missing |
+| # | Trường | Thiếu |
 |---:|---|---:|
 | 1 | Credit Score | 0 (0.000%) |
 | 2 | First Payment Date | 0 (0.000%) |
@@ -49,7 +49,7 @@ Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47
 
 ### Performance
 
-| # | Field | Missing |
+| # | Trường | Thiếu |
 |---:|---|---:|
 | 1 | Loan Sequence Number | 0 (0.000%) |
 | 2 | Monthly Reporting Period | 0 (0.000%) |
@@ -87,9 +87,9 @@ Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47
 | 34 | Servicer Name | 0 (0.000%) |
 | 35 | Bankruptcy Cramdown Costs | 3,396,380 (97.958%) |
 
-## Delinquency status rows
+## Số dòng theo mã trạng thái quá hạn
 
-| Code | Rows |
+| Mã | Số dòng |
 |---|---:|
 | 00 | 3,415,433 |
 | 01 | 23,522 |
@@ -164,9 +164,9 @@ Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47
 | 69 | 1 |
 | 70 | 1 |
 
-## Zero-balance code rows
+## Số dòng theo mã zero-balance
 
-| Code | Rows |
+| Mã | Số dòng |
 |---|---:|
 | 01 | 38,212 |
 | 16 | 108 |
@@ -175,6 +175,10 @@ Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47
 | 96 | 35 |
 | 15 | 18 |
 | 03 | 18 |
+
+Missing counts above are raw blanks only, not sentinel counts or post-cleaning missingness.
+Calendar gaps total 3 missing months in 2 intervals.
+See docs/provenance_data.md for raw/archive identity; schema compatibility does not verify download provenance.
 
 ## Survival cohort construction
 

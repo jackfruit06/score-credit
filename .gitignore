@@ -1,10 +1,45 @@
-# Generated analysis artifacts; raw Freddie Mac inputs stay untouched.
+# Chỉ công bố các kết quả tổng hợp cần cho báo cáo.
+# Dataset survival, dự báo từng khoản, model pickle và experiments trùng lặp vẫn bị loại.
 outputs/**
 !outputs/.gitkeep
-reports/figures/**
-reports/tables/**
-reports/models/**
-reports/logs/**
+!outputs/survival_dataset_summary.json
+!outputs/models/
+!outputs/models/model_metrics.json
+!outputs/models_temporal_validation/
+!outputs/models_temporal_validation/model_metrics.json
+!outputs/models_cltv/
+!outputs/models_cltv/model_metrics.json
+!outputs/models_tie_sensitivity/
+!outputs/models_tie_sensitivity/model_metrics.json
+
+# Chỉ giữ báo cáo của lần chạy đầy đủ gần nhất (2026-10-24).
+reports/**
+!reports/run_summary.md
+!reports/data_audit.json
+!reports/data_audit.md
+!reports/eda.md
+!reports/tables/
+!reports/tables/**
+!reports/tables_temporal_validation/
+!reports/tables_temporal_validation/**
+!reports/tables_cltv/
+!reports/tables_cltv/**
+!reports/tables_tie_sensitivity/
+!reports/tables_tie_sensitivity/**
+!reports/figures/
+!reports/figures/**
+!reports/figures_temporal_validation/
+!reports/figures_temporal_validation/**
+!reports/figures_cltv/
+!reports/figures_cltv/**
+!reports/figures_tie_sensitivity/
+!reports/figures_tie_sensitivity/**
+
+# Dữ liệu gốc lưu cục bộ, không công bố lên GitHub
+/sample_2015.zip
+/sample_orig_2015.txt
+/sample_perf_2015.txt
+
 __pycache__/
 **/__pycache__/
 *.py[cod]

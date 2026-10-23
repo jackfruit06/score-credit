@@ -1,0 +1,26 @@
+{
+  "n_loans": 49980,
+  "cause_counts": {
+    "0": 10656,
+    "1": 2019,
+    "2": 37305
+  },
+  "event_a_count": 2019,
+  "delayed_entry_n": 2736,
+  "followup_months": {
+    "median": 62.0,
+    "p25": 37.0,
+    "p75": 106.0,
+    "max": 134
+  },
+  "missing_pct_after_sentinel_conversion": {
+    "classic_fico": 0.0,
+    "original_ltv": 2.000800320128051e-05,
+    "original_cltv": 2.000800320128051e-05,
+    "original_dti": 0.08041216486594638,
+    "original_upb": 0.0,
+    "original_interest_rate": 0.0,
+    "original_loan_term": 0.0,
+    "mi_percentage": 0.0
+  }
+}

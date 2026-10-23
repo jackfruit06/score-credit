@@ -1,4 +1,4 @@
-"""Prespecified calendar-cohort holdout using the existing Cox/AJ pipeline."""
+"""Holdout cohort theo lịch được định trước, dùng pipeline Cox/AJ hiện có."""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +14,7 @@ from survival_pipeline import (ROOT, administrative_brier_terms, calendar_cohort
 
 
 def calendar_entry_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Descriptive counts only; small late calendar cells remain visible."""
+    """Chỉ thống kê mô tả; vẫn giữ các nhóm lịch muộn có cỡ mẫu nhỏ."""
     data = df.copy()
     year = pd.to_numeric(data.first_payment_date, errors="raise").astype(int) // 100
     data["fpd_period"] = year.map(lambda y: str(y) if y < 2017 else "2017+")
@@ -51,15 +51,15 @@ def main() -> None:
     table_dir.mkdir(parents=True, exist_ok=True)
     calendar_entry_summary(df).to_csv(table_dir / "calendar_entry_summary.csv", index=False)
 
-    description = (f"Calendar-cohort holdout by First Payment Date: train <= {cutoff}, "
-                   f"test > {cutoff}; test loans are later-starting cohorts within the same source sample. "
-                   "This is not external validation and does not emulate a historical as-of training date.")
+    description = (f"Holdout cohort theo lịch dựa trên First Payment Date: train <= {cutoff}, "
+                   f"test > {cutoff}; khoản vay test thuộc các cohort bắt đầu muộn hơn trong cùng mẫu nguồn. "
+                   "Đây không phải validation bên ngoài và không mô phỏng ngày huấn luyện tại một thời điểm lịch sử.")
     metrics = run_model(df, args.outputs / "models_temporal_validation", table_dir,
                         args.reports / "figures_temporal_validation",
                         seed=int(config["model"]["seed"]), bootstrap_n=args.bootstrap,
                         split_indices=(train_idx, test_idx), split_description=description)
-    # Descriptive, known-outcome test score by delayed-entry group. No subgroup
-    # intervals are reported because later-entry event counts are small.
+    # Score mô tả trên test có kết quả đã biết, phân theo nhóm delayed entry.
+    # Không báo cáo khoảng cho nhóm con vì số biến cố ở nhóm entry muộn ít.
     test = df.iloc[test_idx].reset_index(drop=True)
     bundle = load_model_bundle(args.outputs / "models_temporal_validation" / "cause_specific_cox_models.pkl")
     predictions = score_new_loans(bundle, test, metrics["horizons_months"])

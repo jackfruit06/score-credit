@@ -68,9 +68,9 @@ class SurvivalPipelineTests(unittest.TestCase):
                 perf_row("B", "201503", age="3"), perf_row("B", "201504", age="4", code="01", effective="201504"),
                 perf_row("C", "201501", age="1"), perf_row("C", "201502", status="03", age="2", code="09", effective="201502"),
                 perf_row("D", "201502", age="2"),
-                # A terminal exit before the declared First Payment Date is outside the risk cohort.
+                # Kết thúc trước First Payment Date đã khai báo nằm ngoài cohort nguy cơ.
                 perf_row("E", "201502", age="0", code="01", effective="201502"),
-                # A pre-origin status is ignored; later 90+ remains the first at-risk event.
+                # Prior 90+ before origin excludes an incident-cohort candidate.
                 perf_row("F", "201502", status="03", age="0"), perf_row("F", "201503", age="1"),
                 perf_row("F", "201504", status="03", age="2"),
             ]
@@ -86,12 +86,12 @@ class SurvivalPipelineTests(unittest.TestCase):
             self.assertEqual(int(rows.loc["D", "event_time_months"]), 2)
             self.assertEqual(summary["same_month_ambiguities_treated_as_competing"], 1)
             self.assertNotIn("E", rows.index)
-            self.assertEqual(int(rows.loc["F", "event_cause"]), 1)
-            self.assertEqual(rows.loc["F", "first_90plus_period"], "201504")
+            self.assertNotIn("F", rows.index)
+            self.assertEqual(summary["other_exclusion_reasons"]["pre_origin_90plus"], 1)
             self.assertEqual(summary["loans_excluded_terminal_before_time_origin"], 1)
             self.assertEqual(summary["pre_origin_90plus_rows_ignored"], 1)
         finally:
-            for p in (orig_path, perf_path, out_path):
+            for p in (orig_path, perf_path, out_path, out_path.with_suffix(".exclusions.csv")):
                 p.unlink(missing_ok=True)
 
     def test_aalen_johansen_exact_monthly_ties_and_probability_invariants(self):
@@ -99,7 +99,7 @@ class SurvivalPipelineTests(unittest.TestCase):
         entry = np.array([0, 0, 0, 0])
         cause = np.array([1, 2, 1, 0])
         aj = aalen_johansen_cif(duration, entry, cause)
-        # Month 1: one of four events of each type; month 2: one of two survivors is cause 1.
+        # Tháng 1: mỗi loại có một trong bốn biến cố; tháng 2: một trong hai khoản còn sống gặp nguyên nhân 1.
         np.testing.assert_allclose(aj.loc[0, ["survival_all", "cif_cause_1", "cif_cause_2"]].to_numpy(float), [.5, .25, .25])
         np.testing.assert_allclose(aj.loc[1, ["survival_all", "cif_cause_1", "cif_cause_2"]].to_numpy(float), [.25, .5, .25])
         np.testing.assert_allclose(aj.survival_all + aj.cif_cause_1 + aj.cif_cause_2, 1.0)
@@ -111,7 +111,7 @@ class SurvivalPipelineTests(unittest.TestCase):
             aalen_johansen_cif(np.array([1]), np.array([1]), np.array([1]))
 
     def test_piecewise_competing_hazards_match_constant_hazard_analytic_solution(self):
-        # Lambda values are annual rates, converted to each monthly interval.
+        # Lambda là hazard theo năm, được chuyển đổi cho từng khoảng tháng.
         lam_event, lam_competing = .12, .24
         months = 60
         increments = {
@@ -129,7 +129,7 @@ class SurvivalPipelineTests(unittest.TestCase):
         expected_6 = [0 if h <= 6 else lam_event / lam_total * (1 - np.exp(-lam_total * (h - 6) / 12)) for h in horizons]
         np.testing.assert_allclose(cif[0, :, 0], expected_0, rtol=1e-12, atol=1e-12)
         np.testing.assert_allclose(cif[1, :, 0], expected_6, rtol=1e-12, atol=1e-12)
-        # With equal hazards across loans, the cause incidences plus survival equal one.
+        # Khi hazard giữa các khoản vay bằng nhau, incidence các nguyên nhân cộng survival bằng 1.
         for hpos, h in enumerate(horizons):
             elapsed = h / 12
             s = np.exp(-lam_total * elapsed)
@@ -146,8 +146,8 @@ class SurvivalPipelineTests(unittest.TestCase):
         np.testing.assert_array_equal(cif, np.zeros_like(cif))
 
     def test_left_truncated_concordance_hand_calculation(self):
-        # Month-3 event has two eligible controls (one concordant, one tied).
-        # Month-5 event has two eligible controls (one concordant, one discordant).
+        # Biến cố tháng 3 có hai đối chứng đủ điều kiện (một cặp cùng thứ tự, một cặp hòa).
+        # Biến cố tháng 5 có hai đối chứng đủ điều kiện (một cặp cùng thứ tự, một cặp ngược thứ tự).
         cindex, pairs = left_truncated_c_index(
             duration=[3, 5, 6, 8], entry=[0, 0, 1, 4],
             event=[1, 1, 0, 0], risk=[.9, .7, .2, .9])
@@ -209,7 +209,7 @@ class SurvivalPipelineTests(unittest.TestCase):
         return km
 
     def test_brier_only_primary_event_hand_calculation(self):
-        # Event at 2 gives y=1; still-event-free at 4 gives y=0. G=1.
+        # Biến cố tại tháng 2 cho y=1; còn không biến cố đến tháng 4 cho y=0. G=1.
         score, y, w = cif_ipcw_brier([2, 4], [0, 0], [1, 0], 3, [.8, .2], self.km_no_censoring())
         np.testing.assert_array_equal(y, [1, 0]); np.testing.assert_array_equal(w, [1, 1])
         self.assertAlmostEqual(score, ((1 - .8) ** 2 + .2 ** 2) / 2)
@@ -220,7 +220,7 @@ class SurvivalPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(score, (.2 ** 2 + .3 ** 2) / 2)
 
     def test_brier_drops_censor_before_horizon_from_loss_not_denominator(self):
-        # Training reverse-KM has G(3-)=1/2; the censored test loan at 2 is unknown.
+        # Reverse-KM train có G(3-)=1/2; kết quả khoản test bị kiểm duyệt tại 2 chưa biết.
         km = KaplanMeierFitter().fit([2, 5], event_observed=[True, False], entry=[0, 0])
         score, y, w = cif_ipcw_brier([3, 4, 2], [0, 0, 0], [1, 0, 0], 3,
                                      [.8, .2, .9], km)
@@ -228,7 +228,7 @@ class SurvivalPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(score, (.04 * 2 + .04 * 2) / 3)
 
     def test_brier_event_exactly_at_horizon_is_a_case_not_a_control(self):
-        # Monthly endpoint status is observed through month 3; event at 3 is positive.
+        # Trạng thái endpoint theo tháng được quan sát đến hết tháng 3; biến cố tại 3 là dương tính.
         score, y, w = cif_ipcw_brier([3], [0], [1], 3, [.7], self.km_no_censoring())
         np.testing.assert_array_equal(y, [1]); np.testing.assert_array_equal(w, [1])
         self.assertAlmostEqual(score, .3 ** 2)
@@ -249,7 +249,7 @@ class SurvivalPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(score, (.1 ** 2 + .2 ** 2) / 2)
 
     def test_brier_delayed_entry_uses_conditional_censor_survival_ratio(self):
-        # Reverse-KM G(2-)=G(3-)=1/2. Conditional on entry at 2, both weights are 1.
+        # Reverse-KM G(2-)=G(3-)=1/2. Có điều kiện entry tại 2, cả hai trọng số bằng 1.
         km = KaplanMeierFitter().fit([1, 5], event_observed=[True, False], entry=[0, 0])
         score, y, w = cif_ipcw_brier([3, 5], [2, 2], [1, 0], 4, [.8, .2], km)
         np.testing.assert_array_equal(y, [1, 0]); np.testing.assert_allclose(w, [1, 1])
@@ -262,22 +262,22 @@ class SurvivalPipelineTests(unittest.TestCase):
         np.testing.assert_array_equal(weights, [0, 0])
 
     def test_brier_keeps_large_finite_ipcw_weights_without_arbitrary_cutoff(self):
-        # Reverse-KM G(3-)=1/25; both observed statuses get weight 25, not zeroed.
+        # Reverse-KM G(3-)=1/25; hai trạng thái quan sát đều có trọng số 25, không bị đặt về 0.
         km = KaplanMeierFitter().fit([2] * 24 + [5], event_observed=[True] * 24 + [False], entry=[0] * 25)
         score, y, w = cif_ipcw_brier([4, 6], [0, 0], [1, 0], 4, [.8, .2], km)
         np.testing.assert_array_equal(y, [1, 0]); np.testing.assert_allclose(w, [25, 25])
         self.assertAlmostEqual(score, 1.0)
 
     def test_brier_entry_at_or_after_horizon_is_ineligible(self):
-        # At e=h the subject is not at risk for any post-entry interval by h.
+        # Khi e=h, đối tượng chưa có khoảng nguy cơ nào sau entry tính đến h.
         score, y, w = cif_ipcw_brier([4, 5], [3, 4], [1, 0], 3, [.7, .2], self.km_no_censoring())
         self.assertTrue(np.isnan(score))
         np.testing.assert_array_equal(y, [0, 0])
         np.testing.assert_array_equal(w, [0, 0])
 
     def test_administrative_brier_hand_example_and_unknown_censor_exclusion(self):
-        # At h=3: target case, competing negative, known event-free, censor at h,
-        # unknown censor before h, and entry at h (ineligible). No censor weights.
+        # Tại h=3: ca đích, âm tính cạnh tranh, event-free đã biết, kiểm duyệt tại h,
+        # kiểm duyệt chưa biết trước h và entry tại h (không đủ điều kiện). Không dùng trọng số kiểm duyệt.
         d = [2, 2, 4, 3, 1, 4]
         e = [0, 0, 0, 0, 0, 3]
         c = [1, 2, 0, 0, 0, 0]
@@ -289,20 +289,20 @@ class SurvivalPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(score, .045)
 
     def test_conditional_training_aj_reference_hand_calculation(self):
-        # Synthetic curve from manual product-limit arithmetic:
-        # month 1: risk 4, one event of each cause -> S=.5,F1=.25;
-        # month 2: risk 2, one event of cause 1 -> S=.25,F1=.5.
+        # Đường cong tổng hợp tính tay theo product-limit:
+        # tháng 1: risk 4, mỗi nguyên nhân có một biến cố -> S=.5,F1=.25;
+        # tháng 2: risk 2, một biến cố nguyên nhân 1 -> S=.25,F1=.5.
         aj = aalen_johansen_cif([1, 1, 2, 2], [0, 0, 0, 0], [1, 2, 1, 0])
         pred = conditional_aj_cif(aj, [0, 1], 2)
-        # Entrant at 0: F1(2)=.5. Conditional on event-free through month 1:
+        # Entry tại 0: F1(2)=.5. Có điều kiện chưa biến cố đến hết tháng 1:
         # (.5-.25)/.5=.5.
         np.testing.assert_allclose(pred, [.5, .5])
 
     def test_marginal_censor_survival_does_not_recover_known_admin_followup(self):
-        # Loan A is administratively observed through h=3 (C=5); loan B's
-        # administration ends at 2. Conditioning on their known calendar cutoffs
-        # gives A weight 1 and B is not scoreable. A marginal reverse-KM gives
-        # A weight 2, showing the assumption the production IPCW needs.
+        # Khoản A được theo dõi hành chính đến h=3 (C=5); theo dõi của khoản B
+        # kết thúc ở 2. Điều kiện hóa theo cutoff lịch đã biết cho A trọng số 1,
+        # còn B không thể chấm. Reverse-KM biên cho A trọng số 2, thể hiện giả định
+        # mà IPCW trong pipeline cần có.
         km = KaplanMeierFitter().fit([2, 5], event_observed=[True, True], entry=[0, 0])
         score, y, w = cif_ipcw_brier([4, 2], [0, 0], [0, 0], 3, [.2, .9], km)
         self.assertAlmostEqual(w[0], 2.0)
@@ -321,7 +321,7 @@ class SurvivalPipelineTests(unittest.TestCase):
             duplicate = perf_row("A", "201501", age="1")
             with perf_path.open("w", newline="", encoding="utf-8") as f:
                 csv.writer(f, delimiter="|").writerows([duplicate, duplicate])
-            with self.assertRaisesRegex(ValueError, "Duplicate or unsorted monthly row"):
+            with self.assertRaisesRegex(ValueError, "Dòng tháng bị trùng hoặc sai thứ tự"):
                 build_survival_data(orig_path, perf_path, out_path)
         finally:
             for p in (orig_path, perf_path, out_path):
