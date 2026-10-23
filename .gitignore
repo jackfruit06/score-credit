@@ -1,0 +1,13 @@
+# Generated analysis artifacts; raw Freddie Mac inputs stay untouched.
+outputs/**
+!outputs/.gitkeep
+reports/figures/**
+reports/tables/**
+reports/models/**
+reports/logs/**
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/

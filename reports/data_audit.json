@@ -1,0 +1,641 @@
+{
+  "source": "Freddie Mac SFLLD Sample 2015; physical schema matches Release 47 (July 2026)",
+  "origination": {
+    "path": "D:\\cox_lendingclub_project\\sample_orig_2015.txt",
+    "rows": 50000,
+    "columns": 31,
+    "unique_loan_ids": 50000,
+    "missing_by_column": [
+      {
+        "index": 1,
+        "name": "Credit Score",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 2,
+        "name": "First Payment Date",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 3,
+        "name": "First Time Homebuyer Flag",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 4,
+        "name": "Maturity Date",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 5,
+        "name": "Metropolitan Statistical Area (MSA)",
+        "missing": 5604,
+        "missing_pct": 0.11208
+      },
+      {
+        "index": 6,
+        "name": "Mortgage Insurance Percentage",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 7,
+        "name": "Number of Units",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 8,
+        "name": "Occupancy Status",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 9,
+        "name": "Original Combined Loan-to-Value (CLTV)",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 10,
+        "name": "Original Debt-to-Income (DTI)",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 11,
+        "name": "Original UPB",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 12,
+        "name": "Original Loan-to-Value (LTV)",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 13,
+        "name": "Original Interest Rate",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 14,
+        "name": "Channel",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 15,
+        "name": "Prepayment Penalty Indicator",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 16,
+        "name": "Amortization Type",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 17,
+        "name": "Property State",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 18,
+        "name": "Property Type",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 19,
+        "name": "Postal Code",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 20,
+        "name": "Loan Sequence Number",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 21,
+        "name": "Loan Purpose",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 22,
+        "name": "Original Loan Term",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 23,
+        "name": "Number of Borrowers",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 24,
+        "name": "Seller Name",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 25,
+        "name": "Super Conforming Flag",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 26,
+        "name": "Pre-HARP Loan Sequence Number",
+        "missing": 45983,
+        "missing_pct": 0.91966
+      },
+      {
+        "index": 27,
+        "name": "Special Eligibility Program",
+        "missing": 49675,
+        "missing_pct": 0.9935
+      },
+      {
+        "index": 28,
+        "name": "HARP Indicator",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 29,
+        "name": "Property Valuation Method",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 30,
+        "name": "Interest Only Indicator",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 31,
+        "name": "VantageScore 4.0",
+        "missing": 0,
+        "missing_pct": 0.0
+      }
+    ]
+  },
+  "performance": {
+    "path": "D:\\cox_lendingclub_project\\sample_perf_2015.txt",
+    "rows": 3467166,
+    "columns": 35,
+    "unique_loan_ids": 50000,
+    "missing_by_column": [
+      {
+        "index": 1,
+        "name": "Loan Sequence Number",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 2,
+        "name": "Monthly Reporting Period",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 3,
+        "name": "Current Actual UPB",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 4,
+        "name": "Current Loan Delinquency Status",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 5,
+        "name": "Loan Age",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 6,
+        "name": "Remaining Months to Legal Maturity",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 7,
+        "name": "Defect Settlement Date",
+        "missing": 3467127,
+        "missing_pct": 0.9999887516201993
+      },
+      {
+        "index": 8,
+        "name": "Modification Flag",
+        "missing": 3447815,
+        "missing_pct": 0.9944187846788991
+      },
+      {
+        "index": 9,
+        "name": "Zero Balance Code",
+        "missing": 3428675,
+        "missing_pct": 0.9888984259767198
+      },
+      {
+        "index": 10,
+        "name": "Zero Balance Effective Date",
+        "missing": 3428675,
+        "missing_pct": 0.9888984259767198
+      },
+      {
+        "index": 11,
+        "name": "Current Interest Rate",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 12,
+        "name": "Current Non-Interest Bearing UPB",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 13,
+        "name": "Due Date of Last Paid Installment",
+        "missing": 3442762,
+        "missing_pct": 0.992961398444724
+      },
+      {
+        "index": 14,
+        "name": "MI Recoveries",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 15,
+        "name": "Net Sales Proceeds",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 16,
+        "name": "Non-MI Recoveries",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 17,
+        "name": "Total Expenses",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 18,
+        "name": "Legal Costs",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 19,
+        "name": "Maintenance and Preservation Costs",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 20,
+        "name": "Taxes and Insurance",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 21,
+        "name": "Miscellaneous Expenses",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 22,
+        "name": "Actual Loss",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 23,
+        "name": "Cumulative Modification Costs",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 24,
+        "name": "Interest Rate Step Indicator",
+        "missing": 3447815,
+        "missing_pct": 0.9944187846788991
+      },
+      {
+        "index": 25,
+        "name": "Payment Deferral Flag",
+        "missing": 3430025,
+        "missing_pct": 0.9892877929698203
+      },
+      {
+        "index": 26,
+        "name": "Estimated Loan-to-Value (ELTV)",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 27,
+        "name": "Zero Balance Removal UPB",
+        "missing": 3428675,
+        "missing_pct": 0.9888984259767198
+      },
+      {
+        "index": 28,
+        "name": "Delinquent Accrued Interest",
+        "missing": 3467032,
+        "missing_pct": 0.9999613517206849
+      },
+      {
+        "index": 29,
+        "name": "Delinquency Due to Disaster",
+        "missing": 3448710,
+        "missing_pct": 0.994676920574325
+      },
+      {
+        "index": 30,
+        "name": "Borrower Assistance Plan",
+        "missing": 3446668,
+        "missing_pct": 0.9940879669447612
+      },
+      {
+        "index": 31,
+        "name": "Current Period Modification Costs",
+        "missing": 3412300,
+        "missing_pct": 0.9841755485604092
+      },
+      {
+        "index": 32,
+        "name": "Current Interest Bearing UPB",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 33,
+        "name": "Mortgage Insurance Cancellation Indicator",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 34,
+        "name": "Servicer Name",
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "index": 35,
+        "name": "Bankruptcy Cramdown Costs",
+        "missing": 3396380,
+        "missing_pct": 0.9795839022417733
+      }
+    ],
+    "report_period_min": "201501",
+    "report_period_max": "202603",
+    "reporting_months": 135,
+    "status_row_counts": {
+      "00": 3415433,
+      "01": 23522,
+      "02": 6686,
+      "03": 3756,
+      "04": 2597,
+      "05": 2151,
+      "06": 1654,
+      "RA": 567,
+      "07": 1427,
+      "08": 1182,
+      "09": 1029,
+      "10": 925,
+      "11": 836,
+      "12": 742,
+      "13": 633,
+      "14": 527,
+      "15": 461,
+      "16": 419,
+      "17": 381,
+      "18": 345,
+      "19": 259,
+      "20": 236,
+      "21": 192,
+      "22": 151,
+      "23": 130,
+      "24": 110,
+      "25": 102,
+      "26": 91,
+      "27": 86,
+      "28": 60,
+      "29": 49,
+      "30": 48,
+      "31": 44,
+      "32": 36,
+      "33": 35,
+      "34": 32,
+      "35": 24,
+      "36": 21,
+      "37": 17,
+      "38": 17,
+      "39": 16,
+      "40": 14,
+      "41": 14,
+      "42": 11,
+      "43": 7,
+      "44": 8,
+      "45": 8,
+      "46": 7,
+      "47": 7,
+      "48": 7,
+      "49": 6,
+      "50": 5,
+      "51": 5,
+      "52": 5,
+      "53": 3,
+      "54": 2,
+      "55": 2,
+      "56": 2,
+      "57": 2,
+      "58": 2,
+      "59": 2,
+      "60": 2,
+      "61": 2,
+      "62": 2,
+      "63": 2,
+      "64": 2,
+      "65": 2,
+      "66": 2,
+      "67": 1,
+      "68": 1,
+      "69": 1,
+      "70": 1
+    },
+    "zero_balance_code_row_counts": {
+      "01": 38212,
+      "96": 35,
+      "09": 55,
+      "15": 18,
+      "02": 45,
+      "16": 108,
+      "03": 18
+    },
+    "first_period_loan_counts": {
+      "201501": 29,
+      "201502": 2669,
+      "201503": 3796,
+      "201504": 4935,
+      "201505": 4382,
+      "201506": 3992,
+      "201507": 3834,
+      "201508": 4162,
+      "201509": 4007,
+      "201510": 3988,
+      "201511": 4380,
+      "201512": 3610,
+      "201601": 3902,
+      "201602": 590,
+      "201603": 183,
+      "201604": 34,
+      "201605": 8,
+      "201606": 5,
+      "201607": 5,
+      "201608": 15,
+      "201609": 7,
+      "201610": 11,
+      "201611": 7,
+      "201612": 43,
+      "201701": 4,
+      "201702": 2,
+      "201703": 1,
+      "201704": 1,
+      "201707": 7,
+      "201708": 10,
+      "201710": 1,
+      "201711": 70,
+      "201712": 14,
+      "201803": 2,
+      "201804": 1,
+      "201805": 1,
+      "201809": 1,
+      "201810": 2,
+      "201811": 316,
+      "201901": 2,
+      "201902": 1,
+      "201903": 317,
+      "201904": 155,
+      "201905": 15,
+      "201906": 4,
+      "201907": 454,
+      "201908": 2,
+      "201909": 4,
+      "201910": 3,
+      "201911": 9,
+      "202001": 1,
+      "202002": 5,
+      "202005": 1
+    },
+    "first_observed_loan_age_counts": {
+      "0": 43823,
+      "1": 3441,
+      "10": 5,
+      "11": 8,
+      "12": 5,
+      "13": 9,
+      "14": 12,
+      "15": 9,
+      "16": 6,
+      "17": 5,
+      "18": 3,
+      "19": 3,
+      "2": 968,
+      "20": 7,
+      "21": 2,
+      "22": 3,
+      "23": 14,
+      "24": 22,
+      "25": 14,
+      "26": 8,
+      "27": 7,
+      "28": 5,
+      "29": 5,
+      "3": 214,
+      "30": 5,
+      "31": 5,
+      "32": 4,
+      "33": 5,
+      "34": 8,
+      "35": 20,
+      "36": 36,
+      "37": 37,
+      "38": 74,
+      "39": 86,
+      "4": 42,
+      "40": 93,
+      "41": 72,
+      "42": 77,
+      "43": 103,
+      "44": 97,
+      "45": 53,
+      "46": 54,
+      "47": 54,
+      "48": 84,
+      "49": 86,
+      "5": 23,
+      "50": 75,
+      "51": 90,
+      "52": 68,
+      "53": 13,
+      "54": 2,
+      "57": 1,
+      "58": 2,
+      "6": 10,
+      "60": 1,
+      "7": 7,
+      "8": 10,
+      "9": 5
+    }
+  },
+  "join": {
+    "matched_loan_ids": 50000,
+    "origination_only": 0,
+    "performance_only": 0,
+    "origination_only_examples": [],
+    "performance_only_examples": []
+  },
+  "duplicates_loan_period": 0,
+  "global_loan_id_order_decreases": 0,
+  "loans_with_calendar_gaps": 2,
+  "missing_calendar_month_intervals": 3,
+  "gap_examples": [
+    {
+      "loan_id": "F15Q30201969",
+      "from": "201611",
+      "to": "201701",
+      "missing_months": 1
+    },
+    {
+      "loan_id": "F15Q40044673",
+      "from": "201705",
+      "to": "201708",
+      "missing_months": 2
+    }
+  ]
+}

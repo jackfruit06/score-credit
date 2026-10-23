@@ -1,0 +1,816 @@
+"""Reproducible Freddie Mac loan survival and competing-risk analysis."""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import logging
+import math
+import pickle
+import warnings
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from lifelines import CoxPHFitter, KaplanMeierFitter
+from scipy.stats import pearsonr, rankdata
+from sklearn.model_selection import train_test_split
+
+ROOT = Path(__file__).resolve().parents[1]
+LOG = logging.getLogger("survival_pipeline")
+ORIG_FIELDS = {
+    "classic_fico": 0, "first_payment_date": 1, "first_time_homebuyer": 2,
+    "maturity_date": 3, "msa": 4, "mi_percentage": 5, "number_of_units": 6,
+    "occupancy_status": 7, "original_cltv": 8, "original_dti": 9,
+    "original_upb": 10, "original_ltv": 11, "original_interest_rate": 12,
+    "channel": 13, "prepayment_penalty_flag": 14, "amortization_type": 15,
+    "property_state": 16, "property_type": 17, "postal_code": 18,
+    "loan_id": 19, "loan_purpose": 20, "original_loan_term": 21,
+    "number_of_borrowers": 22, "seller_name": 23, "super_conforming_flag": 24,
+    "pre_harp_loan_id": 25, "special_eligibility_program": 26, "harp_indicator": 27,
+    "property_valuation_method": 28, "interest_only_indicator": 29,
+    "vantagescore_4": 30,
+}
+ORIG_LAYOUT = [
+    "Credit Score", "First Payment Date", "First Time Homebuyer Flag", "Maturity Date",
+    "Metropolitan Statistical Area (MSA)", "Mortgage Insurance Percentage", "Number of Units",
+    "Occupancy Status", "Original Combined Loan-to-Value (CLTV)", "Original Debt-to-Income (DTI)",
+    "Original UPB", "Original Loan-to-Value (LTV)", "Original Interest Rate", "Channel",
+    "Prepayment Penalty Indicator", "Amortization Type", "Property State", "Property Type",
+    "Postal Code", "Loan Sequence Number", "Loan Purpose", "Original Loan Term",
+    "Number of Borrowers", "Seller Name", "Super Conforming Flag", "Pre-HARP Loan Sequence Number",
+    "Special Eligibility Program", "HARP Indicator", "Property Valuation Method",
+    "Interest Only Indicator", "VantageScore 4.0",
+]
+PERF_LAYOUT = [
+    "Loan Sequence Number", "Monthly Reporting Period", "Current Actual UPB",
+    "Current Loan Delinquency Status", "Loan Age", "Remaining Months to Legal Maturity",
+    "Defect Settlement Date", "Modification Flag", "Zero Balance Code",
+    "Zero Balance Effective Date", "Current Interest Rate", "Current Non-Interest Bearing UPB",
+    "Due Date of Last Paid Installment", "MI Recoveries", "Net Sales Proceeds",
+    "Non-MI Recoveries", "Total Expenses", "Legal Costs", "Maintenance and Preservation Costs",
+    "Taxes and Insurance", "Miscellaneous Expenses", "Actual Loss", "Cumulative Modification Costs",
+    "Interest Rate Step Indicator", "Payment Deferral Flag", "Estimated Loan-to-Value (ELTV)",
+    "Zero Balance Removal UPB", "Delinquent Accrued Interest", "Delinquency Due to Disaster",
+    "Borrower Assistance Plan", "Current Period Modification Costs", "Current Interest Bearing UPB",
+    "Mortgage Insurance Cancellation Indicator", "Servicer Name", "Bankruptcy Cramdown Costs",
+]
+ZERO_CODES = {"01", "02", "03", "09", "15", "16", "96"}
+NUMERIC = ["classic_fico", "original_ltv", "original_dti", "original_interest_rate",
+           "original_loan_term", "mi_percentage", "log_original_upb", "has_mortgage_insurance"]
+CATEGORICAL = ["occupancy_status", "loan_purpose", "property_type", "first_time_homebuyer",
+               "channel", "number_of_borrowers", "number_of_units"]
+SENTINELS = {"classic_fico": {"9999"}, "original_ltv": {"999"}, "original_cltv": {"999"},
+             "original_dti": {"999"}, "mi_percentage": {"999"}, "number_of_borrowers": {"99"},
+             "number_of_units": {"99"}, "occupancy_status": {"9"},
+             "first_time_homebuyer": {"9"}, "loan_purpose": {"9"}, "property_type": {"99"}}
+
+
+def month_index(value: str) -> int:
+    if len(value) != 6 or not value.isdigit():
+        raise ValueError(f"Invalid YYYYMM month: {value!r}")
+    year, month = int(value[:4]), int(value[4:])
+    if year < 1900 or not 1 <= month <= 12:
+        raise ValueError(f"Invalid YYYYMM month: {value!r}")
+    return year * 12 + month - 1
+
+
+def month_string(index: int) -> str:
+    year, month0 = divmod(int(index), 12)
+    return f"{year:04d}{month0 + 1:02d}"
+
+
+def _read_rows(path: Path, ncols: int):
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
+        for row_no, row in enumerate(csv.reader(f, delimiter="|"), start=1):
+            if not row:
+                continue
+            if len(row) != ncols:
+                raise ValueError(f"{path.name}:{row_no}: expected {ncols} fields, got {len(row)}")
+            yield row_no, [v.strip() for v in row]
+
+
+def audit_data(orig_path: Path, perf_path: Path, out_dir: Path) -> dict[str, Any]:
+    """Streaming structural/relational audit; does not mutate raw files."""
+    orig_ids, orig_missing = set(), Counter()
+    orig_rows = 0
+    for row_no, row in _read_rows(orig_path, 31):
+        orig_rows += 1
+        loan_id = row[19]
+        if not loan_id or loan_id in orig_ids:
+            raise ValueError(f"Origination blank or duplicate Loan Sequence Number at line {row_no}")
+        orig_ids.add(loan_id)
+        orig_missing.update(i for i, v in enumerate(row) if not v)
+
+    perf_ids, perf_missing = set(), Counter()
+    status_counts, zero_counts, first_period_counts, first_age_counts = Counter(), Counter(), Counter(), Counter()
+    perf_rows, duplicates, global_id_decrease = 0, 0, 0
+    previous_key = ("", -1)
+    per_loan_prev: dict[str, int] = {}
+    gaps = []
+    min_month, max_month = None, None
+    first_seen = set()
+    for row_no, row in _read_rows(perf_path, 35):
+        perf_rows += 1
+        loan_id, period = row[0], row[1]
+        if not loan_id:
+            raise ValueError(f"Blank performance Loan Sequence Number at line {row_no}")
+        pm = month_index(period)
+        key = (loan_id, pm)
+        if key == previous_key:
+            duplicates += 1
+        if loan_id < previous_key[0]:
+            global_id_decrease += 1
+        previous_key = key
+        perf_ids.add(loan_id)
+        perf_missing.update(i for i, v in enumerate(row) if not v)
+        status_counts[row[3] or "<EMPTY>"] += 1
+        if row[8]:
+            zero_counts[row[8]] += 1
+            if row[8] not in ZERO_CODES:
+                LOG.warning("Uncatalogued zero-balance code %s at line %d", row[8], row_no)
+        min_month = pm if min_month is None else min(min_month, pm)
+        max_month = pm if max_month is None else max(max_month, pm)
+        prev = per_loan_prev.get(loan_id)
+        if prev is None:
+            first_period_counts[period] += 1
+            first_age_counts[row[4] or "<EMPTY>"] += 1
+            first_seen.add(loan_id)
+        elif pm <= prev:
+            raise ValueError(f"Unsorted/non-increasing performance months for {loan_id} at line {row_no}")
+        elif pm - prev > 1:
+            gaps.append({"loan_id": loan_id, "from": month_string(prev), "to": period, "missing_months": pm - prev - 1})
+        per_loan_prev[loan_id] = pm
+
+    only_orig, only_perf = sorted(orig_ids - perf_ids), sorted(perf_ids - orig_ids)
+    if duplicates:
+        raise ValueError(f"Duplicate (loan_id, reporting_period) rows: {duplicates}")
+    col_missing_orig = [{"index": i + 1, "name": ORIG_LAYOUT[i], "missing": orig_missing[i],
+                         "missing_pct": orig_missing[i] / max(orig_rows, 1)} for i in range(31)]
+    col_missing_perf = [{"index": i + 1, "name": PERF_LAYOUT[i], "missing": perf_missing[i],
+                         "missing_pct": perf_missing[i] / max(perf_rows, 1)} for i in range(35)]
+    result = {
+        "source": "Freddie Mac SFLLD Sample 2015; physical schema matches Release 47 (July 2026)",
+        "origination": {"path": str(orig_path), "rows": orig_rows, "columns": 31,
+                        "unique_loan_ids": len(orig_ids), "missing_by_column": col_missing_orig},
+        "performance": {"path": str(perf_path), "rows": perf_rows, "columns": 35,
+                        "unique_loan_ids": len(perf_ids), "missing_by_column": col_missing_perf,
+                        "report_period_min": month_string(min_month), "report_period_max": month_string(max_month),
+                        "reporting_months": max_month - min_month + 1,
+                        "status_row_counts": dict(status_counts), "zero_balance_code_row_counts": dict(zero_counts),
+                        "first_period_loan_counts": dict(sorted(first_period_counts.items())),
+                        "first_observed_loan_age_counts": dict(sorted(first_age_counts.items()))},
+        "join": {"matched_loan_ids": len(orig_ids & perf_ids), "origination_only": len(only_orig),
+                 "performance_only": len(only_perf), "origination_only_examples": only_orig[:20],
+                 "performance_only_examples": only_perf[:20]},
+        "duplicates_loan_period": duplicates, "global_loan_id_order_decreases": global_id_decrease,
+        "loans_with_calendar_gaps": len(gaps), "missing_calendar_month_intervals": sum(x["missing_months"] for x in gaps),
+        "gap_examples": gaps[:20],
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "data_audit.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    lines = ["# Data audit", "", f"Source/schema: {result['source']}", "",
+             f"- Origination: {orig_rows:,} rows, 31 columns, {len(orig_ids):,} unique loans.",
+             f"- Performance: {perf_rows:,} rows, 35 columns, {len(perf_ids):,} unique loans.",
+             f"- Matched IDs: {len(orig_ids & perf_ids):,}; origination only: {len(only_orig):,}; performance only: {len(only_perf):,}.",
+             f"- Reporting window: {month_string(min_month)}–{month_string(max_month)} ({max_month-min_month+1} calendar months).",
+             f"- Duplicate loan-month rows: {duplicates}; per-loan calendar gaps: {len(gaps)} intervals across {len({x['loan_id'] for x in gaps})} loans.",
+             "- Raw files are pipe-delimited, headerless; audit streamed rows without editing inputs.", "",
+             "## Column missingness", "", "### Origination", "", "| # | Field | Missing |", "|---:|---|---:|"]
+    lines += [f"| {x['index']} | {x['name']} | {x['missing']:,} ({x['missing_pct']:.3%}) |" for x in col_missing_orig]
+    lines += ["", "### Performance", "", "| # | Field | Missing |", "|---:|---|---:|"]
+    lines += [f"| {x['index']} | {x['name']} | {x['missing']:,} ({x['missing_pct']:.3%}) |" for x in col_missing_perf]
+    lines += ["", "## Delinquency status rows", "", "| Code | Rows |", "|---|---:|"]
+    lines += [f"| {k} | {v:,} |" for k, v in status_counts.most_common()]
+    lines += ["", "## Zero-balance code rows", "", "| Code | Rows |", "|---|---:|"]
+    lines += [f"| {k} | {v:,} |" for k, v in zero_counts.most_common()]
+    (out_dir / "data_audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return result
+
+
+def build_survival_data(orig_path: Path, perf_path: Path, out_path: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    loans: dict[str, dict[str, Any]] = {}
+    for row_no, row in _read_rows(orig_path, 31):
+        loan_id, fp = row[19], row[1]
+        if not loan_id or loan_id in loans:
+            raise ValueError(f"Blank or duplicate origination ID at line {row_no}")
+        loans[loan_id] = {name: row[idx] for name, idx in ORIG_FIELDS.items()}
+        loans[loan_id].update({"first_payment_month": month_index(fp), "first_period_month": None,
+                               "last_period_month": None, "first_age": None, "first_mod": "",
+                               "first_event_month": None, "first_event_period": "", "first_event_status": "",
+                               "zero_code": "", "zero_effective_month": None, "zero_effective_date": "",
+                               "zero_report_period": "", "n_perf_rows": 0})
+    status_rows = Counter()
+    zero_loans = Counter()
+    for row_no, row in _read_rows(perf_path, 35):
+        loan_id, period, status, zero_code, zero_date = row[0], row[1], row[3], row[8], row[9]
+        if loan_id not in loans:
+            raise ValueError(f"Performance ID missing from origination at line {row_no}: {loan_id}")
+        pmonth = month_index(period)
+        loan = loans[loan_id]
+        if loan["last_period_month"] is not None and pmonth <= loan["last_period_month"]:
+            raise ValueError(f"Duplicate or unsorted monthly row for {loan_id}: {period}")
+        loan["n_perf_rows"] += 1
+        if loan["first_period_month"] is None:
+            loan["first_period_month"], loan["first_age"], loan["first_mod"] = pmonth, row[4], row[7]
+        loan["last_period_month"] = pmonth
+        status_rows[status or "<EMPTY>"] += 1
+        if status.isdigit() and int(status) >= 3 and loan["first_event_month"] is None:
+            loan["first_event_month"], loan["first_event_period"], loan["first_event_status"] = pmonth, period, status
+        if zero_code:
+            if loan["zero_code"]:
+                raise ValueError(f"Multiple zero-balance code rows for {loan_id}")
+            if zero_code not in ZERO_CODES:
+                raise ValueError(f"Unexpected zero-balance code {zero_code} for {loan_id}")
+            loan["zero_code"], loan["zero_effective_date"], loan["zero_report_period"] = zero_code, zero_date, period
+            loan["zero_effective_month"] = month_index(zero_date) if zero_date else pmonth
+            zero_loans[zero_code] += 1
+
+    records, event_a, competing, censored, ambiguous = [], 0, Counter(), 0, 0
+    event_b = Counter()
+    entry_age_mismatch = 0
+    for loan_id, loan in loans.items():
+        if loan["n_perf_rows"] == 0:
+            raise ValueError(f"Origination loan has no performance rows: {loan_id}")
+        first_m, last_m = loan["first_period_month"], loan["last_period_month"]
+        entry = max(0, first_m - loan["first_payment_month"])
+        first_age = int(loan["first_age"]) if str(loan["first_age"]).isdigit() else None
+        expected_age = max(0, first_m - loan["first_payment_month"] + 1)
+        if first_age is not None and not loan["first_mod"] and first_age != expected_age:
+            entry_age_mismatch += 1
+        terminal = loan["zero_effective_month"]
+        e_month = loan["first_event_month"]
+        last_time = max(entry + 1, last_m - loan["first_payment_month"] + 1)
+        tie = e_month is not None and terminal is not None and e_month == terminal
+        if e_month is not None and (terminal is None or e_month < terminal):
+            duration = max(entry + 1, e_month - loan["first_payment_month"] + 1)
+            cause, exit_type = 1, "first_90plus"
+            event_a += 1
+        elif terminal is not None:
+            duration = max(entry + 1, terminal - loan["first_payment_month"] + 1)
+            cause, exit_type = 2, f"zero_balance_{loan['zero_code']}"
+            competing[loan["zero_code"]] += 1
+            ambiguous += int(tie)
+        else:
+            duration, cause, exit_type = last_time, 0, "right_censored_at_last_observation"
+            censored += 1
+        if duration <= entry:
+            raise ValueError(f"Non-positive observed interval for {loan_id}: entry={entry}, duration={duration}")
+        code = loan["zero_code"]
+        if code in {"03", "09"}:
+            event_b[code] += 1
+        record = {k: loan[k] for k in ORIG_FIELDS}
+        record.update({"first_observed_period": month_string(first_m), "last_observed_period": month_string(last_m),
+                       "first_observed_loan_age": loan["first_age"], "delayed_entry_months": entry,
+                       "n_performance_rows": loan["n_perf_rows"], "first_90plus_period": loan["first_event_period"],
+                       "first_90plus_status": loan["first_event_status"], "zero_balance_code": code,
+                       "zero_balance_effective_date": loan["zero_effective_date"],
+                       "zero_balance_report_period": loan["zero_report_period"],
+                       "event_time_months": duration, "event_cause": cause, "event_a_90plus": int(cause == 1),
+                       "exit_type": exit_type, "same_month_90plus_termination_tie": int(tie),
+                       "duration_b_credit_disposition_months": max(entry + 1, terminal - loan["first_payment_month"] + 1)
+                       if code in {"03", "09"} and terminal is not None else last_time,
+                       "event_b_credit_disposition": int(code in {"03", "09"}),
+                       "time_origin": "first_payment_date_calendar_month"})
+        records.append(record)
+    df = pd.DataFrame(records)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False, encoding="utf-8")
+    summary = {"n_loans": len(df), "primary_90plus_events": event_a,
+               "competing_zero_balance_exits": int(sum(competing.values())),
+               "competing_exit_codes": dict(competing), "right_censored": censored,
+               "same_month_ambiguities_treated_as_competing": ambiguous,
+               "endpoint_b_code_03_or_09_counts": dict(event_b),
+               "endpoint_b_total_events": int(sum(event_b.values())),
+               "loans_with_delayed_entry": int((df.delayed_entry_months > 0).sum()),
+               "entry_clock_mismatch_vs_first_loan_age_unmodified": entry_age_mismatch,
+               "zero_balance_effective_date_missing_fallback_to_report_month": int(df.zero_balance_effective_date.eq("").sum()),
+               "status_row_counts": dict(status_rows), "time_origin": "First Payment Date calendar month",
+               "terminal_time": "Zero Balance Effective Date; reporting month fallback only if missing",
+               "event_month_rule": "event recorded at month end; same-month terminal handled as competing exit",
+               "output": str(out_path)}
+    return df, summary
+
+
+def _clean_original(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col, codes in SENTINELS.items():
+        if col in out:
+            out[col] = out[col].astype(str).replace(list(codes), np.nan)
+    for col in ["classic_fico", "original_ltv", "original_cltv", "original_dti", "original_upb",
+                "original_interest_rate", "original_loan_term", "mi_percentage"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    out["log_original_upb"] = np.log1p(out.original_upb.clip(lower=0))
+    out["has_mortgage_insurance"] = (out.mi_percentage.fillna(0) > 0).astype(float)
+    return out
+
+
+def prepare_features(df: pd.DataFrame, train_idx: np.ndarray, test_idx: np.ndarray):
+    clean = _clean_original(df)
+    train, test = clean.iloc[train_idx].copy(), clean.iloc[test_idx].copy()
+    transform: dict[str, Any] = {"numeric": {}, "categorical": {}, "dropped": []}
+    tx, vx = pd.DataFrame(index=train.index), pd.DataFrame(index=test.index)
+    for col in NUMERIC:
+        med = train[col].median()
+        if pd.isna(med):
+            transform["dropped"].append({"field": col, "reason": "all missing in training"})
+            continue
+        tr_missing, te_missing = train[col].isna(), test[col].isna()
+        trval, teval = train[col].fillna(med), test[col].fillna(med)
+        mean, sd = float(trval.mean()), float(trval.std(ddof=0))
+        if not np.isfinite(sd) or sd == 0:
+            transform["dropped"].append({"field": col, "reason": "constant in training"})
+            continue
+        tx[col], vx[col] = (trval - mean) / sd, (teval - mean) / sd
+        add_missing = int(tr_missing.sum()) >= 30
+        transform["numeric"][col] = {"median": float(med), "mean": mean, "sd": sd,
+                                      "missing_indicator": add_missing, "train_missing": int(tr_missing.sum())}
+        if add_missing:
+            tx[col + "_missing"], vx[col + "_missing"] = tr_missing.astype(float), te_missing.astype(float)
+    for col in CATEGORICAL:
+        tr = train[col].replace("", np.nan).fillna("Unknown").astype(str)
+        te = test[col].replace("", np.nan).fillna("Unknown").astype(str)
+        counts = tr.value_counts()
+        rare = set(counts[counts < 100].index)
+        tr = tr.where(~tr.isin(rare), "Other")
+        te = te.where(~te.isin(rare), "Other")
+        levels = sorted(tr.unique())
+        if len(levels) < 2:
+            transform["dropped"].append({"field": col, "reason": "constant in training"})
+            continue
+        transform["categorical"][col] = {"levels": levels, "reference": levels[0], "rare_cutoff": 100,
+                                          "rare_values": sorted(rare)}
+        tr_d = pd.get_dummies(pd.Categorical(tr, categories=levels), prefix=col, drop_first=True, dtype=float)
+        te = te.where(te.isin(levels), levels[0])
+        te_d = pd.get_dummies(pd.Categorical(te, categories=levels), prefix=col, drop_first=True, dtype=float)
+        tr_d.index, te_d.index = tx.index, vx.index
+        tx = pd.concat([tx, tr_d], axis=1)
+        vx = pd.concat([vx, te_d], axis=1)
+    vx = vx.reindex(columns=tx.columns, fill_value=0)
+    tx = tx.astype(float).reset_index(drop=True)
+    vx = vx.astype(float).reset_index(drop=True)
+    return tx, vx, transform, clean
+
+
+def aalen_johansen_cif(duration: np.ndarray, entry: np.ndarray, cause: np.ndarray,
+                       times: np.ndarray | None = None, n_causes: int = 2) -> pd.DataFrame:
+    """Discrete monthly Aalen-Johansen product-limit estimate with delayed entry.
+
+    Each interval ends at its integer month. Tied causes update simultaneously:
+    S(t)=S(t-1)*(1-d_all/Y), F_k(t)=F_k(t-1)+S(t-1)*d_k/Y.
+    """
+    duration, entry, cause = np.asarray(duration, float), np.asarray(entry, float), np.asarray(cause, int)
+    if not (len(duration) == len(entry) == len(cause)):
+        raise ValueError("duration, entry, cause length mismatch")
+    if np.any(duration <= entry) or np.any(duration <= 0) or np.any(cause < 0) or np.any(cause > n_causes):
+        raise ValueError("Invalid delayed-entry competing-risk data")
+    grid = np.arange(1, int(np.max(duration)) + 1) if times is None else np.asarray(times, int)
+    survival, cif = 1.0, np.zeros(n_causes, dtype=float)
+    results = []
+    event_times = set(duration[cause > 0].astype(int))
+    for t in grid:
+        if int(t) in event_times:
+            risk = int(np.sum((entry < t) & (duration >= t)))
+            d = np.array([np.sum((duration == t) & (cause == k)) for k in range(1, n_causes + 1)], dtype=float)
+            if risk <= 0 or d.sum() > risk:
+                raise ValueError(f"Invalid risk set at month {t}: Y={risk}, events={d.sum()}")
+            old_survival = survival
+            cif += old_survival * d / risk
+            survival *= 1.0 - d.sum() / risk
+        results.append([int(t), float(survival), *cif.tolist()])
+        if not np.isfinite(survival) or np.any(~np.isfinite(cif)) or survival < -1e-12 or np.any(cif < -1e-12):
+            raise ArithmeticError("Non-finite or negative probability in Aalen-Johansen estimate")
+        if np.any(cif > 1 + 1e-12) or survival > 1 + 1e-12 or abs(survival + cif.sum() - 1) > 1e-8:
+            raise ArithmeticError("Aalen-Johansen probability invariants failed")
+    return pd.DataFrame(results, columns=["time_months", "survival_all"] + [f"cif_cause_{k}" for k in range(1, n_causes + 1)])
+
+
+def integrate_competing_cumulative_hazards(increments: dict[int, np.ndarray],
+                                           entry: np.ndarray, horizons: list[int]) -> np.ndarray:
+    """Integrate monthly cause-specific cumulative-hazard increments to CIFs.
+
+    Each value in increments[k] is Delta H_k for one month and one loan. Within
+    the interval hazards are piecewise constant, so the event-free probability
+    multiplies by exp(-sum Delta H) and each cause receives its proportional
+    share of the total interval failure probability.
+    """
+    entry = np.asarray(entry, int)
+    max_t = max(horizons)
+    if not increments:
+        raise ValueError("At least one cause-specific hazard is required")
+    n = len(entry)
+    if any(np.asarray(h).shape != (n, max_t) for h in increments.values()):
+        raise ValueError("Cause hazard increment arrays must have shape (n_loans, max_horizon)")
+    if any(np.any(~np.isfinite(h)) or np.any(np.asarray(h) < -1e-10) for h in increments.values()):
+        raise ValueError("Cause-specific hazard increments must be finite and nonnegative")
+    survival = np.ones(n, dtype=float)
+    cif = {cause: np.zeros(n, dtype=float) for cause in increments}
+    out = np.full((n, len(horizons), len(increments)), np.nan)
+    h_to_col = {int(h): j for j, h in enumerate(horizons)}
+    for t in range(1, max_t + 1):
+        active = entry < t
+        total = np.sum(np.vstack([increments[k][:, t - 1] for k in increments]), axis=0)
+        fail = -np.expm1(-total)
+        for k, dh_grid in increments.items():
+            dh = dh_grid[:, t - 1]
+            frac = np.divide(dh, total, out=np.zeros_like(dh), where=total > 0)
+            dk = survival * fail * frac
+            cif[k][active] += dk[active]
+        survival[active] *= np.exp(-total[active])
+        current_sum = survival + np.sum(np.vstack([cif[k] for k in cif]), axis=0)
+        if (np.any(survival < -1e-10) or np.any(survival > 1 + 1e-10)
+                or np.any(current_sum < 1 - 1e-9) or np.any(current_sum > 1 + 1e-9)):
+            raise ArithmeticError("CIF/survival probability invariants failed")
+        if t in h_to_col:
+            for cause_pos, cause in enumerate(increments):
+                out[:, h_to_col[t], cause_pos] = cif[cause]
+    if np.any((out[np.isfinite(out)] < -1e-10) | (out[np.isfinite(out)] > 1 + 1e-10)):
+        raise ArithmeticError("Predicted CIF outside [0, 1]")
+    # Event-free survival plus all cause-specific incidences must sum to 1 for
+    # loans followed from time zero; for delayed entry, pre-entry increments are
+    # intentionally excluded and the same identity holds conditionally.
+    return out
+
+
+def competing_cox_cif(cause_models: dict[int, CoxPHFitter], features: pd.DataFrame,
+                      entry: np.ndarray, horizons: list[int]) -> np.ndarray:
+    """Conditional CIF from fitted cause-specific Cox cumulative hazards."""
+    entry = np.asarray(entry, int)
+    max_t = max(horizons)
+    times = np.arange(0, max_t + 1, dtype=float)
+    cumulative = {}
+    for cause, model in cause_models.items():
+        raw = model.predict_cumulative_hazard(features, times=times)
+        cumulative[cause] = raw.to_numpy(dtype=float).T
+        if cumulative[cause].shape != (len(features), len(times)):
+            raise ValueError("Unexpected cumulative hazard prediction shape")
+        if np.any(np.diff(cumulative[cause], axis=1) < -1e-9):
+            raise ArithmeticError("Predicted cumulative cause-specific hazard is not monotone")
+    increments = {k: np.maximum(0.0, h[:, 1:] - h[:, :-1]) for k, h in cumulative.items()}
+    all_cif = integrate_competing_cumulative_hazards(increments, entry, horizons)
+    cause_order = list(cumulative)
+    # Public metric evaluates cause 1; function returns its CIF at each horizon.
+    return all_cif[:, :, cause_order.index(1)]
+
+
+def transform_new_features(new_df: pd.DataFrame, transform: dict[str, Any],
+                           feature_columns: list[str], use_cltv: bool = False) -> pd.DataFrame:
+    """Apply train-fitted preprocessing to new origination records."""
+    raw = new_df.copy()
+    if use_cltv and "original_cltv" in raw:
+        raw["original_ltv"] = raw["original_cltv"]
+    clean = _clean_original(raw)
+    out = pd.DataFrame(index=np.arange(len(clean)))
+    for col, info in transform["numeric"].items():
+        vals = clean[col].fillna(info["median"])
+        out[col] = (vals.to_numpy(float) - info["mean"]) / info["sd"]
+        if info["missing_indicator"]:
+            out[col + "_missing"] = clean[col].isna().to_numpy(float)
+    for col, info in transform["categorical"].items():
+        levels, rare_values = info["levels"], set(info.get("rare_values", []))
+        vals = clean[col].replace("", np.nan).fillna("Unknown").astype(str)
+        vals = vals.where(~vals.isin(rare_values), "Other")
+        vals = vals.where(vals.isin(levels), info["reference"])
+        dummies = pd.get_dummies(pd.Categorical(vals, categories=levels), prefix=col, drop_first=True, dtype=float)
+        dummies.index = out.index
+        out = pd.concat([out, dummies], axis=1)
+    return out.reindex(columns=feature_columns, fill_value=0).astype(float)
+
+
+def score_new_loans(bundle: dict[str, Any], new_loans: pd.DataFrame,
+                    horizons: list[int] = (12, 24, 36, 60)) -> pd.DataFrame:
+    """Return cause-specific CIF predictions conditional on each row's entry month."""
+    features = transform_new_features(new_loans, bundle["transform"], bundle["feature_columns"],
+                                      bundle.get("use_cltv_sensitivity", False))
+    entry = (pd.to_numeric(new_loans["delayed_entry_months"], errors="raise").to_numpy(int)
+             if "delayed_entry_months" in new_loans else np.zeros(len(new_loans), dtype=int))
+    max_t = max(horizons)
+    times = np.arange(0, max_t + 1, dtype=float)
+    cumulative = {k: model.predict_cumulative_hazard(features, times=times).to_numpy(float).T
+                  for k, model in bundle["models"].items()}
+    increments = {k: np.maximum(0.0, h[:, 1:] - h[:, :-1]) for k, h in cumulative.items()}
+    all_cif = integrate_competing_cumulative_hazards(increments, entry, list(horizons))
+    names = {1: "predicted_cif_first_90plus", 2: "predicted_cif_any_zero_balance_exit"}
+    result = pd.DataFrame({"delayed_entry_months": entry})
+    if "loan_id" in new_loans:
+        result.insert(0, "loan_id", new_loans["loan_id"].astype(str).to_numpy())
+    for pos, cause in enumerate(bundle["models"]):
+        for j, horizon in enumerate(horizons):
+            result[f"{names.get(cause, f'predicted_cif_cause_{cause}')}_{horizon}m"] = all_cif[:, j, pos]
+    return result
+
+
+def load_model_bundle(path: Path) -> dict[str, Any]:
+    """Load the fitted cause-specific models and train-fitted preprocessing."""
+    with path.open("rb") as f:
+        bundle = pickle.load(f)
+    required = {"models", "feature_columns", "transform", "use_cltv_sensitivity"}
+    if not required.issubset(bundle):
+        raise ValueError(f"Model bundle is missing keys: {sorted(required - set(bundle))}")
+    return bundle
+
+
+def left_truncated_c_index(duration, entry, event, risk) -> tuple[float, int]:
+    duration, entry, event, risk = map(np.asarray, (duration, entry, event, risk))
+    concordant, comparable = 0.0, 0
+    for i in np.flatnonzero(event == 1):
+        controls = (entry < duration[i]) & (duration > duration[i])
+        controls[i] = False
+        diffs = risk[i] - risk[controls]
+        concordant += float(np.sum(diffs > 1e-12)) + .5 * float(np.sum(np.abs(diffs) <= 1e-12))
+        comparable += int(len(diffs))
+    return (concordant / comparable if comparable else float("nan"), comparable)
+
+
+def _km_survival_before(km: KaplanMeierFitter, time: float) -> float:
+    v = km.survival_function_at_times([max(0, time - 1e-7)]).to_numpy()
+    return float(v[0])
+
+
+def cif_ipcw_brier(duration, entry, cause, horizon: int, pred_cif,
+                   censor_km: KaplanMeierFitter) -> tuple[float, np.ndarray, np.ndarray]:
+    """IPCW Brier score for CIF; competing events are known target non-events."""
+    duration, entry, cause, pred = map(np.asarray, (duration, entry, cause, pred_cif))
+    eligible = entry < horizon
+    y = np.zeros(len(duration), dtype=float)
+    weight = np.zeros(len(duration), dtype=float)
+    case = eligible & (cause == 1) & (duration <= horizon)
+    comp = eligible & (cause > 1) & (duration <= horizon)
+    control = eligible & (duration >= horizon)
+    y[case] = 1.0
+    for i in np.flatnonzero(case | comp):
+        g = _km_survival_before(censor_km, duration[i])
+        if g > .05:
+            weight[i] = 1.0 / g
+    g_h = _km_survival_before(censor_km, horizon)
+    if g_h > .05:
+        weight[control] = 1.0 / g_h
+    score = float(np.sum(weight[eligible] * (y[eligible] - pred[eligible]) ** 2) / eligible.sum()) if eligible.any() else float("nan")
+    return score, y, weight
+
+
+def schoenfeld_trend(model: CoxPHFitter, x: pd.DataFrame, duration, entry, event, cause_name: str) -> pd.DataFrame:
+    """Approximate unscaled Schoenfeld trend with delayed-entry risk sets/tied Efron expectations."""
+    arr, duration, entry, event = x.to_numpy(float), np.asarray(duration, float), np.asarray(entry, float), np.asarray(event, int)
+    beta = model.params_.reindex(x.columns).to_numpy(float)
+    eta = np.clip(arr @ beta, -500, 500)
+    w = np.exp(eta - np.max(eta))
+    residuals, rtimes = [], []
+    for t in np.unique(duration[event == 1]):
+        deaths = np.flatnonzero((duration == t) & (event == 1))
+        risk = np.flatnonzero((entry < t) & (duration >= t))
+        d = len(deaths)
+        sw, swx = w[risk].sum(), (w[risk, None] * arr[risk]).sum(axis=0)
+        dw, dwx = w[deaths].sum(), (w[deaths, None] * arr[deaths]).sum(axis=0)
+        expected = np.zeros(arr.shape[1])
+        for ell in range(d):
+            f = ell / d
+            denom = sw - f * dw
+            if denom > 0:
+                expected += (swx - f * dwx) / denom
+        expected /= d
+        residuals.extend(arr[deaths] - expected)
+        rtimes.extend([t] * d)
+    if not residuals:
+        return pd.DataFrame(columns=["cause", "term", "n_event_residuals", "correlation", "p_value", "p_value_bh"])
+    mat = np.asarray(residuals)
+    rt = rankdata(rtimes) / len(rtimes)
+    rows = []
+    for j, col in enumerate(x.columns):
+        corr, p = pearsonr(mat[:, j], rt) if np.std(mat[:, j]) else (0.0, 1.0)
+        rows.append({"cause": cause_name, "term": col, "n_event_residuals": len(mat), "correlation": corr, "p_value": p})
+    out = pd.DataFrame(rows).sort_values("p_value").reset_index(drop=True)
+    m = len(out)
+    q = out.p_value.to_numpy() * m / np.arange(1, m + 1)
+    out["p_value_bh"] = np.minimum.accumulate(q[::-1])[::-1].clip(max=1.0)
+    return out
+
+
+def bootstrap_metric_intervals(duration, entry, cause, risk, horizons, brier_terms,
+                              n_boot: int, seed: int) -> pd.DataFrame:
+    """Loan-level test bootstrap; fixed predictions/models, quantifies test-sample metric uncertainty only."""
+    rng = np.random.default_rng(seed)
+    n = len(duration)
+    samples = []
+    for b in range(n_boot):
+        ix = rng.integers(0, n, size=n)
+        cidx, pairs = left_truncated_c_index(np.asarray(duration)[ix], np.asarray(entry)[ix],
+                                               (np.asarray(cause)[ix] == 1).astype(int), np.asarray(risk)[ix])
+        if np.isfinite(cidx):
+            samples.append({"replicate": b, "metric": "left_truncated_c_index", "horizon_months": None, "value": cidx})
+        for h in horizons:
+            # Weights include censoring adjustment; resample loan IDs and retain the eligible denominator.
+            losses, eligible = brier_terms[h]
+            denominator = int(np.sum(eligible[ix]))
+            score = float(np.sum(losses[ix]) / denominator) if denominator else float("nan")
+            if np.isfinite(score):
+                samples.append({"replicate": b, "metric": "cif_ipcw_brier", "horizon_months": h, "value": score})
+    raw = pd.DataFrame(samples)
+    rows = []
+    if not raw.empty:
+        for (metric, horizon), g in raw.groupby(["metric", "horizon_months"], dropna=False):
+            rows.append({"metric": metric, "horizon_months": horizon, "successful_replicates": len(g),
+                         "bootstrap_mean": g.value.mean(), "ci_2_5": g.value.quantile(.025),
+                         "ci_97_5": g.value.quantile(.975),
+                         "scope": "fixed fitted models; resampled test loans only"})
+    return pd.DataFrame(rows)
+
+
+def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir: Path,
+              seed: int = 2026, test_fraction: float = .2, bootstrap_n: int = 100,
+              use_cltv: bool = False) -> dict[str, Any]:
+    """Fit event and competing-exit Cox models; compute conditional CIF and test metrics."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    if use_cltv:
+        df = df.copy()
+        df["original_ltv"] = df["original_cltv"]
+    y = df[["event_time_months", "delayed_entry_months", "event_cause"]].copy()
+    indices = np.arange(len(df))
+    train_idx, test_idx = train_test_split(indices, test_size=test_fraction, random_state=seed,
+                                           stratify=(df.event_cause.to_numpy() == 1))
+    x_train, x_test, transform, _ = prepare_features(df, train_idx, test_idx)
+    y_train, y_test = y.iloc[train_idx].reset_index(drop=True), y.iloc[test_idx].reset_index(drop=True)
+    if any(int((y_train.event_cause == k).sum()) < 20 for k in (1, 2)):
+        raise ValueError("Insufficient training events for both cause-specific models")
+    models = {}
+    model_summaries = []
+    fit_warnings = []
+    for cause, name in ((1, "event_90plus"), (2, "any_zero_balance_exit")):
+        fit_df = x_train.copy()
+        fit_df["_duration"] = y_train.event_time_months.to_numpy(float)
+        fit_df["_entry"] = y_train.delayed_entry_months.to_numpy(float)
+        fit_df["_event"] = (y_train.event_cause.to_numpy() == cause).astype(int)
+        cph = CoxPHFitter()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            cph.fit(fit_df, duration_col="_duration", event_col="_event", entry_col="_entry",
+                    show_progress=False, batch_mode=True)
+        fit_warnings.extend([f"{name}: {w.message}" for w in caught])
+        models[cause] = cph
+        summary = cph.summary.copy().reset_index().rename(columns={"covariate": "term"})
+        summary.insert(0, "cause", name)
+        summary["hazard_ratio"] = np.exp(summary["coef"])
+        summary.to_csv(tables_dir / f"cox_{name}_coefficients.csv", index=False)
+        model_summaries.append(summary)
+    pd.concat(model_summaries, ignore_index=True).to_csv(tables_dir / "cox_coefficients_all_causes.csv", index=False)
+    risk_test = models[1].predict_partial_hazard(x_test).to_numpy().ravel()
+    cindex, comparable = left_truncated_c_index(y_test.event_time_months, y_test.delayed_entry_months,
+                                                (y_test.event_cause == 1).astype(int), risk_test)
+    horizon_candidates = [12, 24, 36, 60]
+    max_h = min(int(y_train.event_time_months.max()), max(horizon_candidates))
+    horizons = [h for h in horizon_candidates if h <= max_h]
+    if not horizons:
+        raise ValueError("No supported evaluation horizons in training follow-up")
+    pred_cif = competing_cox_cif(models, x_test, y_test.delayed_entry_months.to_numpy(), horizons)
+    censor_km = KaplanMeierFitter()
+    # Right censoring is the censoring event; observed competing causes are censored in G(t).
+    censor_km.fit(y_train.event_time_months, event_observed=(y_train.event_cause == 0).astype(int),
+                  entry=y_train.delayed_entry_months)
+    brier_rows, brier_terms = [], {}
+    cal_rows, cal_summary_rows = [], []
+    for j, h in enumerate(horizons):
+        score, outcome, weight = cif_ipcw_brier(y_test.event_time_months, y_test.delayed_entry_months,
+                                                 y_test.event_cause, h, pred_cif[:, j], censor_km)
+        eligible = y_test.delayed_entry_months.to_numpy() < h
+        brier_terms[h] = (weight * (outcome - pred_cif[:, j]) ** 2, eligible)
+        brier_rows.append({"horizon_months": h, "cif_ipcw_brier": score,
+                           "eligible_test_loans": int(eligible.sum()),
+                           "test_event_90plus_by_horizon": int(((y_test.event_cause == 1) & (y_test.event_time_months <= h) & eligible).sum()),
+                           "test_competing_exits_by_horizon": int(((y_test.event_cause == 2) & (y_test.event_time_months <= h) & eligible).sum()),
+                           "censor_survival_at_horizon": _km_survival_before(censor_km, h)})
+        # IPCW calibration by predicted-CIF quintile, conditional on entry and horizon.
+        p = pred_cif[:, j]
+        cal_summary_rows.append({"horizon_months": h, "eligible_test_loans": int(eligible.sum()),
+                                 "mean_predicted_cif": float(np.mean(p[eligible])) if eligible.any() else float("nan"),
+                                 "observed_cif_ipcw": float(np.sum(weight * outcome) / np.sum(weight)) if np.sum(weight) else float("nan")})
+        groups = pd.qcut(pd.Series(p[eligible]), q=5, duplicates="drop")
+        elig_idx = np.flatnonzero(eligible)
+        for grp in groups.unique():
+            local = groups == grp
+            ids = elig_idx[np.asarray(local)]
+            ww = weight[ids]
+            observed = float(np.sum(ww * outcome[ids]) / np.sum(ww)) if np.sum(ww) else float("nan")
+            cal_rows.append({"horizon_months": h, "risk_group": str(grp), "n": len(ids),
+                             "mean_predicted_cif": float(np.mean(p[ids])), "observed_cif_ipcw": observed})
+    pd.DataFrame(brier_rows).to_csv(tables_dir / "cif_brier_scores.csv", index=False)
+    pd.DataFrame(cal_rows).to_csv(tables_dir / "cif_calibration.csv", index=False)
+    pd.DataFrame(cal_summary_rows).to_csv(tables_dir / "cif_overall_test_calibration.csv", index=False)
+    # Nonparametric AJ reference on the held-out sample, with delayed-entry risk sets.
+    aj_test = aalen_johansen_cif(y_test.event_time_months.to_numpy(), y_test.delayed_entry_months.to_numpy(),
+                                  y_test.event_cause.to_numpy(), times=np.arange(1, int(y_test.event_time_months.max()) + 1))
+    aj_test.to_csv(tables_dir / "aalen_johansen_test.csv", index=False)
+    aj_full = aalen_johansen_cif(y.event_time_months.to_numpy(), y.delayed_entry_months.to_numpy(), y.event_cause.to_numpy())
+    aj_full.to_csv(tables_dir / "aalen_johansen_full.csv", index=False)
+    trend_tables = []
+    for cause, name in ((1, "event_90plus"), (2, "any_zero_balance_exit")):
+        event_train = (y_train.event_cause.to_numpy() == cause).astype(int)
+        trend_tables.append(schoenfeld_trend(models[cause], x_train, y_train.event_time_months,
+                                              y_train.delayed_entry_months, event_train, name))
+    ph = pd.concat(trend_tables, ignore_index=True)
+    ph.to_csv(tables_dir / "schoenfeld_trend_approx.csv", index=False)
+    bootstrap = bootstrap_metric_intervals(y_test.event_time_months.to_numpy(), y_test.delayed_entry_months.to_numpy(),
+                                           y_test.event_cause.to_numpy(), risk_test, horizons,
+                                           brier_terms, bootstrap_n, seed + 1)
+    bootstrap.to_csv(tables_dir / "test_metric_bootstrap_fixed_model.csv", index=False)
+    # Machine-readable baseline hazards and fitted model/preprocessing for reproducibility.
+    bundle_path = output_dir / "cause_specific_cox_models.pkl"
+    with bundle_path.open("wb") as f:
+        pickle.dump({"models": models, "feature_columns": list(x_train.columns), "transform": transform,
+                     "causes": {1: "first 90+ delinquency", 2: "any zero-balance termination"},
+                     "use_cltv_sensitivity": use_cltv}, f)
+    reloaded = load_model_bundle(bundle_path)
+    smoke_predictions = score_new_loans(reloaded, df.iloc[test_idx[:5]].copy(), horizons)
+    smoke_cif_cols = [c for c in smoke_predictions if c.startswith("predicted_cif_")]
+    if not np.isfinite(smoke_predictions[smoke_cif_cols].to_numpy(float)).all():
+        raise ArithmeticError("Loaded-model scoring smoke test produced non-finite CIF values")
+    if np.any(smoke_predictions[smoke_cif_cols].to_numpy(float) < -1e-10) or np.any(smoke_predictions[smoke_cif_cols].to_numpy(float) > 1 + 1e-10):
+        raise ArithmeticError("Loaded-model scoring smoke test violated CIF bounds")
+    for cause, name in ((1, "event_90plus"), (2, "any_zero_balance_exit")):
+        models[cause].baseline_cumulative_hazard_.to_csv(tables_dir / f"baseline_cumulative_hazard_{name}.csv")
+    metrics = {"n_train": len(train_idx), "n_test": len(test_idx),
+               "train_cause_counts": {str(k): int((y_train.event_cause == k).sum()) for k in (0, 1, 2)},
+               "test_cause_counts": {str(k): int((y_test.event_cause == k).sum()) for k in (0, 1, 2)},
+               "left_truncated_harrell_c_index_event_90plus": cindex, "comparable_pairs": comparable,
+               "cif_brier_scores": brier_rows, "horizons_months": horizons,
+               "fit_warnings": fit_warnings, "bootstrap_replicates_requested": bootstrap_n,
+               "bootstrap_scope": "test loan resampling with models, preprocessing, and IPCW censor KM held fixed",
+               "diagnostic_scope": "Approximate unscaled Schoenfeld residual trend; lifelines entry_col scaled residuals unsupported.",
+               "model_save_load_scoring_smoke_test": "passed on five held-out loan feature rows; predictions not used for model selection",
+               "cif_method": "Two cause-specific Cox models; piecewise-constant monthly cause hazards; exact competing exponential interval update; conditional on event-free survival to delayed entry.",
+               "censoring_assumption": "Independent administrative censoring conditional on modeled covariates; IPCW G estimated on train with delayed entry.",
+               "split": "Stratified loan-level 80/20 random split within 2015 vintage; not out-of-vintage validation.",
+               "features": list(x_train.columns), "preprocessing": transform, "use_cltv_sensitivity": use_cltv}
+    (output_dir / "model_metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    _plot_cif(aj_full, aj_test, cal_summary_rows, figures_dir)
+    return metrics
+
+
+def _plot_cif(aj_full, aj_test, pred, horizons, y_test, figures_dir):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.step(aj_full.time_months, aj_full.cif_cause_1, where="post", label="Aalen–Johansen, full cohort")
+    ax.step(aj_test.time_months, aj_test.cif_cause_1, where="post", label="Aalen–Johansen, test")
+    mean_pred = np.nanmean(pred, axis=0)
+    ax.plot(horizons, mean_pred, "o--", label="Cause-specific Cox CIF, test mean")
+    ax.set(xlabel="Months from First Payment Date (conditional on entry)", ylabel="Cumulative incidence of first 90+ status",
+           title="90+ delinquency cumulative incidence")
+    ax.set_ylim(0, max(.02, float(aj_full.cif_cause_1.max()) * 1.15))
+    ax.grid(alpha=.25); ax.legend(); fig.tight_layout()
+    fig.savefig(figures_dir / "cif_90plus.png", dpi=160); plt.close(fig)
+
+
+def _plot_cif(aj_full, aj_test, calibration, figures_dir):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.step(aj_full.time_months, aj_full.cif_cause_1, where="post", label="Aalen–Johansen, full cohort")
+    ax.step(aj_test.time_months, aj_test.cif_cause_1, where="post", label="Aalen–Johansen, test")
+    ax.set(xlabel="Months from First Payment Date", ylabel="Population cumulative incidence",
+           title="Observed 90+ delinquency cumulative incidence")
+    ax.set_ylim(0, max(.02, float(aj_full.cif_cause_1.max()) * 1.15))
+    ax.grid(alpha=.25); ax.legend(); fig.tight_layout()
+    fig.savefig(figures_dir / "cif_90plus.png", dpi=160); plt.close(fig)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    pred = [r["mean_predicted_cif"] for r in calibration]
+    obs = [r["observed_cif_ipcw"] for r in calibration]
+    upper = max(.01, max(pred + obs) * 1.15)
+    ax.plot([0, upper], [0, upper], "k--", linewidth=1, label="Ideal calibration")
+    ax.plot(pred, obs, "o-", label="Test set, IPCW")
+    for r in calibration:
+        ax.annotate(f"{r['horizon_months']}m", (r["mean_predicted_cif"], r["observed_cif_ipcw"]),
+                    xytext=(4, 4), textcoords="offset points")
+    ax.set(xlim=(0, upper), ylim=(0, upper), xlabel="Mean predicted CIF (conditional on entry)",
+           ylabel="Observed CIF (IPCW, conditional on entry)", title="Overall test-set CIF calibration")
+    ax.grid(alpha=.25); ax.legend(); fig.tight_layout()
+    fig.savefig(figures_dir / "cif_calibration.png", dpi=160); plt.close(fig)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--orig", type=Path, default=ROOT / "sample_orig_2015.txt")
+    parser.add_argument("--perf", type=Path, default=ROOT / "sample_perf_2015.txt")
+    parser.add_argument("--outputs", type=Path, default=ROOT / "outputs")
+    parser.add_argument("--reports", type=Path, default=ROOT / "reports")
+    parser.add_argument("--bootstrap", type=int, default=100)
+    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--cltv-sensitivity", action="store_true")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    audit = audit_data(args.orig, args.perf, args.reports)
+    LOG.info("Audit complete: %d origination loans, %d performance rows", audit["origination"]["rows"], audit["performance"]["rows"])
+    df, summary = build_survival_data(args.orig, args.perf, args.outputs / "survival_dataset.csv")
+    (args.outputs / "survival_dataset_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    LOG.info("Survival dataset: %s", json.dumps({k: summary[k] for k in ["n_loans", "primary_90plus_events", "competing_zero_balance_exits", "right_censored", "same_month_ambiguities_treated_as_competing", "endpoint_b_total_events"]}))
+    metrics = run_model(df, args.outputs / ("models_cltv" if args.cltv_sensitivity else "models"),
+                        args.reports / ("tables_cltv" if args.cltv_sensitivity else "tables"),
+                        args.reports / ("figures_cltv" if args.cltv_sensitivity else "figures"),
+                        seed=args.seed, bootstrap_n=args.bootstrap, use_cltv=args.cltv_sensitivity)
+    LOG.info("Model complete: C-index=%s; test CIF scores=%s", metrics["left_truncated_harrell_c_index_event_90plus"], metrics["cif_brier_scores"])
+
+
+if __name__ == "__main__":
+    main()
