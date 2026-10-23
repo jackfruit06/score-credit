@@ -53,9 +53,9 @@ Trong đó:
 | `tests/test_audit_regressions.py` | Regression test cho baseline hazard, Efron ties, sentinel, sparse AJ, preprocessing và các lỗi phương pháp đã sửa. |
 | `outputs/` | Dữ liệu survival đã tạo, model bundle, prediction/metric dạng máy đọc được và kết quả thực nghiệm. |
 | `reports/` | Bảng CSV, hình PNG và báo cáo EDA/audit để đọc và đưa vào báo cáo nghiên cứu. |
-| `sample_orig_2015.txt` | Dữ liệu khởi tạo khoản vay. |
-| `sample_perf_2015.txt` | Lịch sử performance hằng tháng. |
-| `sample_2015.zip` | Archive gốc chứa hai tệp dữ liệu trên. |
+| `sample_orig_2015.txt` | Dữ liệu khởi tạo khoản vay, chỉ lưu local và không đưa lên GitHub. |
+| `sample_perf_2015.txt` | Lịch sử performance hằng tháng, chỉ lưu local và không đưa lên GitHub. |
+| `sample_2015.zip` | Archive gốc để đối chiếu checksum, chỉ lưu local và không đưa lên GitHub. |
 | `requirements.txt` | Các thư viện Python tối thiểu. |
 
 Các thư mục con trong `outputs/` và `reports/` có ý nghĩa như sau:
@@ -95,13 +95,11 @@ Các thư mục con trong `outputs/` và `reports/` có ý nghĩa như sau:
 | [`docs/methodology.md`](docs/methodology.md) | Giải thích mô hình Cox, competing risks, delayed entry, CIF và metric. |
 | [`docs/provenance_data.md`](docs/provenance_data.md) | Nguồn, schema và SHA-256 của dữ liệu. |
 
-### Dữ liệu đầu vào
+### Dữ liệu đầu vào chỉ lưu local
 
-| File | Ý nghĩa |
-|---|---|
-| [`sample_orig_2015.txt`](sample_orig_2015.txt) | Thông tin khởi tạo của 50.000 khoản vay. |
-| [`sample_perf_2015.txt`](sample_perf_2015.txt) | Lịch sử performance hằng tháng; file lớn được cấu hình Git LFS tại [`.gitattributes`](.gitattributes). |
-| [`sample_2015.zip`](sample_2015.zip) | Archive dữ liệu nguồn dùng để đối chiếu checksum. |
+Ba tệp dữ liệu không được đưa lên GitHub và không có link tải trực tiếp trong repository. Sau khi clone source, người chạy cần tự lấy dữ liệu theo điều khoản của Freddie Mac, đặt `sample_orig_2015.txt`, `sample_perf_2015.txt` và `sample_2015.zip` vào thư mục gốc, sau đó đối chiếu SHA-256 trong [`docs/provenance_data.md`](docs/provenance_data.md).
+
+Các rule `/sample_2015.zip`, `/sample_orig_2015.txt` và `/sample_perf_2015.txt` trong [`.gitignore`](.gitignore) ngăn ba file này được thêm mới bằng thao tác Git thông thường.
 
 ### Kết quả của lần chạy gần nhất
 
@@ -121,12 +119,12 @@ Các file dưới đây là kết quả được phép đưa lên GitHub. Kết 
 
 Các bảng kết quả được chia theo nhánh:
 
-| Thư mục | Nội dung |
+| Nhánh và file mở trực tiếp | Nội dung |
 |---|---|
-| [`reports/tables/`](reports/tables/) | 19 bảng primary và EDA: hệ số/HR, baseline hazard, AJ, Brier, calibration, bootstrap và PH screening. |
-| [`reports/tables_temporal_validation/`](reports/tables_temporal_validation/) | 15 bảng của temporal validation, gồm phân bố entry theo cohort. |
-| [`reports/tables_cltv/`](reports/tables_cltv/) | 13 bảng của CLTV sensitivity. |
-| [`reports/tables_tie_sensitivity/`](reports/tables_tie_sensitivity/) | 13 bảng của tie sensitivity. |
+| Primary: [`cif_brier_scores.csv`](reports/tables/cif_brier_scores.csv) | Thư mục `reports/tables/` có 19 bảng primary và EDA: hệ số/HR, baseline hazard, AJ, Brier, calibration, bootstrap và PH screening. |
+| Temporal: [`cif_brier_scores.csv`](reports/tables_temporal_validation/cif_brier_scores.csv) | Thư mục `reports/tables_temporal_validation/` có 15 bảng, gồm kết quả temporal và phân bố entry theo cohort. |
+| CLTV: [`cif_brier_scores.csv`](reports/tables_cltv/cif_brier_scores.csv) | Thư mục `reports/tables_cltv/` có 13 bảng của CLTV sensitivity. |
+| Tie: [`cif_brier_scores.csv`](reports/tables_tie_sensitivity/cif_brier_scores.csv) | Thư mục `reports/tables_tie_sensitivity/` có 13 bảng của tie sensitivity. |
 
 Các bảng primary thường dùng khi viết báo cáo:
 
@@ -140,12 +138,12 @@ Các bảng primary thường dùng khi viết báo cáo:
 
 Các hình được chia tương ứng:
 
-| Thư mục | Nội dung |
+| Nhánh và hình mở trực tiếp | Nội dung |
 |---|---|
-| [`reports/figures/`](reports/figures/) | 6 hình primary và EDA. |
-| [`reports/figures_temporal_validation/`](reports/figures_temporal_validation/) | CIF và calibration của temporal validation. |
-| [`reports/figures_cltv/`](reports/figures_cltv/) | CIF và calibration của CLTV sensitivity. |
-| [`reports/figures_tie_sensitivity/`](reports/figures_tie_sensitivity/) | CIF và calibration của tie sensitivity. |
+| Primary: [`cif_90plus_cohort.png`](reports/figures/cif_90plus_cohort.png) | Thư mục `reports/figures/` có 6 hình primary và EDA. |
+| Temporal: [`cif_90plus_cohort.png`](reports/figures_temporal_validation/cif_90plus_cohort.png) | CIF và calibration của temporal validation. |
+| CLTV: [`cif_90plus_cohort.png`](reports/figures_cltv/cif_90plus_cohort.png) | CIF và calibration của CLTV sensitivity. |
+| Tie: [`cif_90plus_cohort.png`](reports/figures_tie_sensitivity/cif_90plus_cohort.png) | CIF và calibration của tie sensitivity. |
 
 Các file dung lượng lớn hoặc chứa dữ liệu cấp khoản vay không được đưa lên: `survival_dataset.csv`, `survival_dataset.exclusions.csv`, `test_predictions.csv`, `split_membership.csv`, model pickle và toàn bộ `outputs/experiments/`. Chúng có thể được tạo lại bằng các lệnh bên dưới.
 
