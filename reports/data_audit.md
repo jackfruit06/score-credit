@@ -175,3 +175,11 @@ Source/schema: Freddie Mac SFLLD Sample 2015; physical schema matches Release 47
 | 96 | 35 |
 | 15 | 18 |
 | 03 | 18 |
+
+## Survival cohort construction
+
+- Loans in source origination/performance files: 50,000.
+- Loans excluded because zero-balance effective date precedes First Payment Date: 20 ({'01': 19, '96': 1}).
+- Analysis loans: 49,980; first 90+ events: 2,019; competing exits: 37,305; right-censored: 10,656.
+- First performance month relative to First Payment Date (before/at/after): {'before': 43823, 'at': 3441, 'after': 2736}.
+- Pre-origin 90+ status rows ignored: 0; same-month 90+/termination ties assigned to competing exit: 30.

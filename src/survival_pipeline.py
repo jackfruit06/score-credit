@@ -71,6 +71,24 @@ SENTINELS = {"classic_fico": {"9999"}, "original_ltv": {"999"}, "original_cltv":
              "first_time_homebuyer": {"9"}, "loan_purpose": {"9"}, "property_type": {"99"}}
 
 
+def load_analysis_config() -> dict[str, Any]:
+    path = ROOT / "config" / "analysis_config.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def calendar_cohort_split(first_payment_date, cutoff: str) -> tuple[np.ndarray, np.ndarray]:
+    """Split loan indices at a YYYYMM cutoff without inspecting outcomes."""
+    dates = pd.to_numeric(pd.Series(first_payment_date), errors="raise").to_numpy(int)
+    cutoff_i = int(cutoff)
+    if len(cutoff) != 6 or cutoff_i < 190001 or cutoff_i > 220012:
+        raise ValueError("cutoff must be a YYYYMM calendar month")
+    train = np.flatnonzero(dates <= cutoff_i)
+    test = np.flatnonzero(dates > cutoff_i)
+    if not len(train) or not len(test):
+        raise ValueError("Calendar cohort split must have nonempty train and test sets")
+    return train, test
+
+
 def month_index(value: str) -> int:
     if len(value) != 6 or not value.isdigit():
         raise ValueError(f"Invalid YYYYMM month: {value!r}")
@@ -207,6 +225,7 @@ def build_survival_data(orig_path: Path, perf_path: Path, out_path: Path) -> tup
                                "zero_report_period": "", "n_perf_rows": 0})
     status_rows = Counter()
     zero_loans = Counter()
+    pre_origin_90plus_rows = 0
     for row_no, row in _read_rows(perf_path, 35):
         loan_id, period, status, zero_code, zero_date = row[0], row[1], row[3], row[8], row[9]
         if loan_id not in loans:
@@ -221,7 +240,10 @@ def build_survival_data(orig_path: Path, perf_path: Path, out_path: Path) -> tup
         loan["last_period_month"] = pmonth
         status_rows[status or "<EMPTY>"] += 1
         if status.isdigit() and int(status) >= 3 and loan["first_event_month"] is None:
-            loan["first_event_month"], loan["first_event_period"], loan["first_event_status"] = pmonth, period, status
+            if pmonth >= loan["first_payment_month"]:
+                loan["first_event_month"], loan["first_event_period"], loan["first_event_status"] = pmonth, period, status
+            else:
+                pre_origin_90plus_rows += 1
         if zero_code:
             if loan["zero_code"]:
                 raise ValueError(f"Multiple zero-balance code rows for {loan_id}")
@@ -233,11 +255,18 @@ def build_survival_data(orig_path: Path, perf_path: Path, out_path: Path) -> tup
 
     records, event_a, competing, censored, ambiguous = [], 0, Counter(), 0, 0
     event_b = Counter()
+    excluded_pre_origin_terminal = Counter()
+    first_performance_relative_to_origin = Counter()
     entry_age_mismatch = 0
     for loan_id, loan in loans.items():
         if loan["n_perf_rows"] == 0:
             raise ValueError(f"Origination loan has no performance rows: {loan_id}")
         first_m, last_m = loan["first_period_month"], loan["last_period_month"]
+        first_performance_relative_to_origin["before" if first_m < loan["first_payment_month"] else
+                                             "at" if first_m == loan["first_payment_month"] else "after"] += 1
+        if loan["zero_effective_month"] is not None and loan["zero_effective_month"] < loan["first_payment_month"]:
+            excluded_pre_origin_terminal[loan["zero_code"]] += 1
+            continue
         entry = max(0, first_m - loan["first_payment_month"])
         first_age = int(loan["first_age"]) if str(loan["first_age"]).isdigit() else None
         expected_age = max(0, first_m - loan["first_payment_month"] + 1)
@@ -288,6 +317,10 @@ def build_survival_data(orig_path: Path, perf_path: Path, out_path: Path) -> tup
                "endpoint_b_code_03_or_09_counts": dict(event_b),
                "endpoint_b_total_events": int(sum(event_b.values())),
                "loans_with_delayed_entry": int((df.delayed_entry_months > 0).sum()),
+               "first_performance_month_relative_to_time_origin": dict(first_performance_relative_to_origin),
+               "pre_origin_90plus_rows_ignored": pre_origin_90plus_rows,
+               "loans_excluded_terminal_before_time_origin": int(sum(excluded_pre_origin_terminal.values())),
+               "excluded_pre_origin_terminal_codes": dict(excluded_pre_origin_terminal),
                "entry_clock_mismatch_vs_first_loan_age_unmodified": entry_age_mismatch,
                "zero_balance_effective_date_missing_fallback_to_report_month": int(df.zero_balance_effective_date.eq("").sum()),
                "status_row_counts": dict(status_rows), "time_origin": "First Payment Date calendar month",
@@ -390,6 +423,72 @@ def aalen_johansen_cif(duration: np.ndarray, entry: np.ndarray, cause: np.ndarra
     return pd.DataFrame(results, columns=["time_months", "survival_all"] + [f"cif_cause_{k}" for k in range(1, n_causes + 1)])
 
 
+def conditional_aj_cif(aj: pd.DataFrame, entry: np.ndarray, horizon: int,
+                      cause: int = 1) -> np.ndarray:
+    """Training-set marginal AJ CIF, conditional on being event-free at entry."""
+    entry = np.asarray(entry, int)
+    if horizon <= 0 or np.any(entry < 0) or np.any(entry >= horizon):
+        raise ValueError("Invalid horizon or entry")
+    col = f"cif_cause_{cause}"
+    if col not in aj or "survival_all" not in aj:
+        raise ValueError("AJ curve does not contain requested cause and survival")
+    survival = np.r_[1.0, aj.survival_all.to_numpy(float)]
+    cif = np.r_[0.0, aj[col].to_numpy(float)]
+    if horizon >= len(survival) or np.any(entry >= len(survival)):
+        raise ValueError("Entry or horizon outside the AJ curve support")
+    denom = survival[entry]
+    numer = cif[horizon] - cif[entry]
+    out = np.divide(numer, denom, out=np.full(len(entry), np.nan), where=denom > 0)
+    if np.any(np.isfinite(out) & ((out < -1e-10) | (out > 1 + 1e-10))):
+        raise ArithmeticError("Conditional AJ CIF outside [0, 1]")
+    return out
+
+
+def administrative_brier_terms(duration, entry, cause, horizon: int,
+                               pred_cif) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    """Unweighted competing-risk Brier score on test loans fully observed through h.
+
+    This avoids estimating G under administrative censoring. It targets the
+    subset with entry < h and a known event status by h (including censoring at h).
+    Censoring strictly before h is excluded because its horizon status is unknown.
+    """
+    duration, entry, cause, pred = map(np.asarray, (duration, entry, cause, pred_cif))
+    if not (len(duration) == len(entry) == len(cause) == len(pred)):
+        raise ValueError("duration, entry, cause, pred_cif length mismatch")
+    if np.any(~np.isfinite(pred)) or np.any((pred < 0) | (pred > 1)):
+        raise ValueError("pred_cif must contain finite probabilities in [0, 1]")
+    eligible = entry < horizon
+    known = eligible & (((cause > 0) & (duration <= horizon)) |
+                        (duration > horizon) | ((duration == horizon) & (cause == 0)))
+    y = ((cause == 1) & (duration <= horizon)).astype(float)
+    losses = np.zeros(len(duration), dtype=float)
+    losses[known] = (y[known] - pred[known]) ** 2
+    score = float(np.mean(losses[known])) if known.any() else float("nan")
+    return score, known, y, losses
+
+
+def paired_bootstrap_mean_difference(model_loss, reference_loss, valid,
+                                     n_boot: int, seed: int) -> dict[str, float | int]:
+    """Percentile interval for model-minus-reference loss, resampling loan pairs."""
+    model_loss, reference_loss, valid = np.asarray(model_loss, float), np.asarray(reference_loss, float), np.asarray(valid, bool)
+    if not (model_loss.shape == reference_loss.shape == valid.shape):
+        raise ValueError("Paired losses and validity mask must have the same shape")
+    if n_boot <= 0:
+        raise ValueError("n_boot must be positive")
+    ids = np.flatnonzero(valid)
+    if not len(ids):
+        return {"difference": float("nan"), "ci_2_5": float("nan"), "ci_97_5": float("nan"),
+                "n_valid": 0, "successful_replicates": 0}
+    delta = model_loss[ids] - reference_loss[ids]
+    if np.any(~np.isfinite(delta)):
+        raise ValueError("Valid paired losses must be finite")
+    rng = np.random.default_rng(seed)
+    draws = np.array([np.mean(delta[rng.integers(0, len(delta), len(delta))]) for _ in range(n_boot)])
+    return {"difference": float(np.mean(delta)), "ci_2_5": float(np.quantile(draws, .025)),
+            "ci_97_5": float(np.quantile(draws, .975)), "n_valid": int(len(ids)),
+            "successful_replicates": int(np.isfinite(draws).sum())}
+
+
 def integrate_competing_cumulative_hazards(increments: dict[int, np.ndarray],
                                            entry: np.ndarray, horizons: list[int]) -> np.ndarray:
     """Integrate monthly cause-specific cumulative-hazard increments to CIFs.
@@ -483,7 +582,7 @@ def transform_new_features(new_df: pd.DataFrame, transform: dict[str, Any],
 
 
 def score_new_loans(bundle: dict[str, Any], new_loans: pd.DataFrame,
-                    horizons: list[int] = (12, 24, 36, 60)) -> pd.DataFrame:
+                    horizons: list[int] = (12, 24, 36, 60, 120)) -> pd.DataFrame:
     """Return cause-specific CIF predictions conditional on each row's entry month."""
     features = transform_new_features(new_loans, bundle["transform"], bundle["feature_columns"],
                                       bundle.get("use_cltv_sensitivity", False))
@@ -528,29 +627,68 @@ def left_truncated_c_index(duration, entry, event, risk) -> tuple[float, int]:
 
 
 def _km_survival_before(km: KaplanMeierFitter, time: float) -> float:
+    if time <= 0:
+        return 1.0
     v = km.survival_function_at_times([max(0, time - 1e-7)]).to_numpy()
     return float(v[0])
 
 
 def cif_ipcw_brier(duration, entry, cause, horizon: int, pred_cif,
                    censor_km: KaplanMeierFitter) -> tuple[float, np.ndarray, np.ndarray]:
-    """IPCW Brier score for CIF; competing events are known target non-events."""
+    """Cause-specific IPCW Brier score conditional on delayed entry.
+
+    The monthly convention treats an outcome recorded at month t (including a
+    right-censor at the end of an observed month) as known through that month.
+    Censoring weights use G(t-) and are conditionalized on being observed at
+    entry: G(t-)/G(entry-). No arbitrary weight truncation is applied. If the
+    censoring distribution has no support for a required status, the score is
+    returned as NaN rather than silently dropping that status.
+    """
     duration, entry, cause, pred = map(np.asarray, (duration, entry, cause, pred_cif))
+    if not (len(duration) == len(entry) == len(cause) == len(pred)):
+        raise ValueError("duration, entry, cause, pred_cif length mismatch")
+    if horizon <= 0 or np.any(duration <= entry) or np.any(entry < 0):
+        raise ValueError("Invalid horizon or delayed-entry survival data")
+    if np.any((cause < 0) | (cause > 2)):
+        raise ValueError("cause must be 0 (censor), 1 (target), or 2 (competing)")
+    if np.any(~np.isfinite(pred)) or np.any((pred < 0) | (pred > 1)):
+        raise ValueError("pred_cif must contain finite probabilities in [0, 1]")
     eligible = entry < horizon
     y = np.zeros(len(duration), dtype=float)
     weight = np.zeros(len(duration), dtype=float)
     case = eligible & (cause == 1) & (duration <= horizon)
     comp = eligible & (cause > 1) & (duration <= horizon)
-    control = eligible & (duration >= horizon)
+    # Event/competing outcomes at t are known at the reporting cut and must not
+    # also enter the event-free group. A censor at t has a row through month-end.
+    control = eligible & ((duration > horizon) | ((duration == horizon) & (cause == 0)))
     y[case] = 1.0
-    for i in np.flatnonzero(case | comp):
-        g = _km_survival_before(censor_km, duration[i])
-        if g > .05:
-            weight[i] = 1.0 / g
-    g_h = _km_survival_before(censor_km, horizon)
-    if g_h > .05:
-        weight[control] = 1.0 / g_h
-    score = float(np.sum(weight[eligible] * (y[eligible] - pred[eligible]) ** 2) / eligible.sum()) if eligible.any() else float("nan")
+    known = case | comp | control
+    unsupported = False
+    for i in np.flatnonzero(known):
+        g_entry = _km_survival_before(censor_km, entry[i])
+        endpoint = duration[i] if case[i] or comp[i] else horizon
+        g_endpoint = _km_survival_before(censor_km, endpoint)
+        if not np.isfinite(g_entry) or not np.isfinite(g_endpoint) or g_entry <= 0 or g_endpoint <= 0:
+            unsupported = True
+            continue
+        conditional_g = g_endpoint / g_entry
+        if conditional_g > 1 + 1e-9:
+            raise ArithmeticError("Conditional censor-survival probability increased after entry")
+        weight[i] = 1.0 / min(conditional_g, 1.0)
+    # A censor before t has an unknown target status. If censor-survival has
+    # already reached zero by t, its missing status cannot be recovered.
+    unknown = eligible & (cause == 0) & (duration < horizon)
+    for i in np.flatnonzero(unknown):
+        g_entry = _km_survival_before(censor_km, entry[i])
+        g_h = _km_survival_before(censor_km, horizon)
+        if not np.isfinite(g_entry) or not np.isfinite(g_h) or g_entry <= 0 or g_h <= 0:
+            unsupported = True
+    if not eligible.any() or not known.any() or unsupported:
+        score = float("nan")
+        if unsupported:
+            weight[:] = 0.0
+    else:
+        score = float(np.sum(weight * (y - pred) ** 2) / eligible.sum())
     return score, y, weight
 
 
@@ -622,9 +760,14 @@ def bootstrap_metric_intervals(duration, entry, cause, risk, horizons, brier_ter
 
 
 def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir: Path,
-              seed: int = 2026, test_fraction: float = .2, bootstrap_n: int = 100,
-              use_cltv: bool = False) -> dict[str, Any]:
+              seed: int = 2026, test_fraction: float | None = None, bootstrap_n: int = 100,
+              use_cltv: bool = False, split_stratification: np.ndarray | None = None,
+              split_indices: tuple[np.ndarray, np.ndarray] | None = None,
+              split_description: str | None = None) -> dict[str, Any]:
     """Fit event and competing-exit Cox models; compute conditional CIF and test metrics."""
+    config = load_analysis_config()
+    if test_fraction is None:
+        test_fraction = float(config["model"]["test_fraction"])
     output_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
@@ -633,8 +776,20 @@ def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir:
         df["original_ltv"] = df["original_cltv"]
     y = df[["event_time_months", "delayed_entry_months", "event_cause"]].copy()
     indices = np.arange(len(df))
-    train_idx, test_idx = train_test_split(indices, test_size=test_fraction, random_state=seed,
-                                           stratify=(df.event_cause.to_numpy() == 1))
+    if split_indices is None:
+        stratification = (df.event_cause.to_numpy() == 1) if split_stratification is None else np.asarray(split_stratification)
+        if len(stratification) != len(df):
+            raise ValueError("split_stratification length does not match analysis cohort")
+        train_idx, test_idx = train_test_split(indices, test_size=test_fraction, random_state=seed,
+                                               stratify=stratification)
+        split_label = split_description or "Stratified loan-level 80/20 random split within 2015 sample; not out-of-vintage validation."
+    else:
+        train_idx, test_idx = (np.asarray(ix, dtype=int) for ix in split_indices)
+        if (len(train_idx) == 0 or len(test_idx) == 0 or
+                len(np.unique(np.r_[train_idx, test_idx])) != len(train_idx) + len(test_idx) or
+                not np.array_equal(np.sort(np.r_[train_idx, test_idx]), indices)):
+            raise ValueError("Explicit train/test indices must partition the analysis cohort exactly once")
+        split_label = split_description or "Explicit loan-level train/test split."
     x_train, x_test, transform, _ = prepare_features(df, train_idx, test_idx)
     y_train, y_test = y.iloc[train_idx].reset_index(drop=True), y.iloc[test_idx].reset_index(drop=True)
     if any(int((y_train.event_cause == k).sum()) < 20 for k in (1, 2)):
@@ -663,7 +818,7 @@ def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir:
     risk_test = models[1].predict_partial_hazard(x_test).to_numpy().ravel()
     cindex, comparable = left_truncated_c_index(y_test.event_time_months, y_test.delayed_entry_months,
                                                 (y_test.event_cause == 1).astype(int), risk_test)
-    horizon_candidates = [12, 24, 36, 60]
+    horizon_candidates = [int(h) for h in config["model"]["evaluation_horizons_months"]]
     max_h = min(int(y_train.event_time_months.max()), max(horizon_candidates))
     horizons = [h for h in horizon_candidates if h <= max_h]
     if not horizons:
@@ -679,12 +834,25 @@ def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir:
         score, outcome, weight = cif_ipcw_brier(y_test.event_time_months, y_test.delayed_entry_months,
                                                  y_test.event_cause, h, pred_cif[:, j], censor_km)
         eligible = y_test.delayed_entry_months.to_numpy() < h
-        brier_terms[h] = (weight * (outcome - pred_cif[:, j]) ** 2, eligible)
+        losses = weight * (outcome - pred_cif[:, j]) ** 2
+        if not np.isfinite(score):
+            losses[:] = np.nan
+        brier_terms[h] = (losses, eligible)
+        positive = weight[weight > 0]
+        ess = float(positive.sum() ** 2 / np.sum(positive ** 2)) if positive.size else 0.0
+        g_entry = np.array([_km_survival_before(censor_km, e) for e in y_test.delayed_entry_months.to_numpy()])
+        g_h = _km_survival_before(censor_km, h)
+        conditional_g = np.divide(g_h, g_entry, out=np.zeros_like(g_entry), where=g_entry > 0)
         brier_rows.append({"horizon_months": h, "cif_ipcw_brier": score,
                            "eligible_test_loans": int(eligible.sum()),
                            "test_event_90plus_by_horizon": int(((y_test.event_cause == 1) & (y_test.event_time_months <= h) & eligible).sum()),
                            "test_competing_exits_by_horizon": int(((y_test.event_cause == 2) & (y_test.event_time_months <= h) & eligible).sum()),
-                           "censor_survival_at_horizon": _km_survival_before(censor_km, h)})
+                           "censor_survival_at_horizon_pre_horizon": g_h,
+                           "minimum_conditional_censor_survival": float(np.min(conditional_g[eligible])) if eligible.any() else float("nan"),
+                           "maximum_ipcw_weight": float(weight.max()) if weight.size else 0.0,
+                           "ipcw_effective_sample_size": ess,
+                           "test_censors_before_horizon": int((eligible & (y_test.event_cause == 0) & (y_test.event_time_months < h)).sum()),
+                           "ipcw_score_defined": bool(np.isfinite(score))})
         # IPCW calibration by predicted-CIF quintile, conditional on entry and horizon.
         p = pred_cif[:, j]
         cal_summary_rows.append({"horizon_months": h, "eligible_test_loans": int(eligible.sum()),
@@ -708,6 +876,45 @@ def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir:
     aj_test.to_csv(tables_dir / "aalen_johansen_test.csv", index=False)
     aj_full = aalen_johansen_cif(y.event_time_months.to_numpy(), y.delayed_entry_months.to_numpy(), y.event_cause.to_numpy())
     aj_full.to_csv(tables_dir / "aalen_johansen_full.csv", index=False)
+    # Training-only marginal AJ reference, conditioned on each test loan being
+    # event-free at its delayed entry. Score only observed horizon outcomes.
+    aj_train = aalen_johansen_cif(y_train.event_time_months.to_numpy(),
+                                  y_train.delayed_entry_months.to_numpy(),
+                                  y_train.event_cause.to_numpy())
+    admin_rows = []
+    for j, h in enumerate(horizons):
+        eligible = y_test.delayed_entry_months.to_numpy() < h
+        baseline = np.full(len(y_test), np.nan)
+        baseline[eligible] = conditional_aj_cif(
+            aj_train, y_test.delayed_entry_months.to_numpy()[eligible], h)
+        if not np.isfinite(baseline[eligible]).all():
+            raise ArithmeticError(f"Training AJ reference has no support at month {h}")
+        model_score, valid, outcome, model_losses = administrative_brier_terms(
+            y_test.event_time_months, y_test.delayed_entry_months, y_test.event_cause,
+            h, pred_cif[:, j])
+        base_score, valid_base, _, base_losses = administrative_brier_terms(
+            y_test.event_time_months, y_test.delayed_entry_months, y_test.event_cause,
+            h, np.nan_to_num(baseline, nan=0.0))
+        if not np.array_equal(valid, valid_base):
+            raise ArithmeticError("Administrative benchmark eligibility mismatch")
+        paired = paired_bootstrap_mean_difference(model_losses, base_losses, valid,
+                                                  bootstrap_n, seed + 2 + j)
+        admin_rows.append({"horizon_months": h, "administrative_brier_model": model_score,
+                           "administrative_brier_training_aj_reference": base_score,
+                           "model_minus_reference": paired["difference"],
+                           "paired_test_bootstrap_ci_2_5": paired["ci_2_5"],
+                           "paired_test_bootstrap_ci_97_5": paired["ci_97_5"],
+                           "known_outcomes_scored": int(valid.sum()),
+                           "eligible_by_entry": int(eligible.sum()),
+                           "unknown_censored_before_horizon": int((eligible & (y_test.event_cause.to_numpy() == 0) &
+                                                                     (y_test.event_time_months.to_numpy() < h)).sum()),
+                           "reference": "training-set delayed-entry Aalen-Johansen, conditioned on event-free at entry",
+                           "bootstrap_replicates_requested": int(bootstrap_n),
+                           "bootstrap_replicates_successful": paired["successful_replicates"],
+                           "bootstrap_seed": int(seed + 2 + j),
+                           "bootstrap_method": "percentile paired resampling of test loan IDs; fitted predictions held fixed",
+                           "uncertainty_scope": "paired test-loan bootstrap; training AJ and fitted Cox held fixed"})
+    pd.DataFrame(admin_rows).to_csv(tables_dir / "cif_administrative_benchmark.csv", index=False)
     trend_tables = []
     for cause, name in ((1, "event_90plus"), (2, "any_zero_balance_exit")):
         event_train = (y_train.event_cause.to_numpy() == cause).astype(int)
@@ -743,37 +950,24 @@ def run_model(df: pd.DataFrame, output_dir: Path, tables_dir: Path, figures_dir:
                "bootstrap_scope": "test loan resampling with models, preprocessing, and IPCW censor KM held fixed",
                "diagnostic_scope": "Approximate unscaled Schoenfeld residual trend; lifelines entry_col scaled residuals unsupported.",
                "model_save_load_scoring_smoke_test": "passed on five held-out loan feature rows; predictions not used for model selection",
-               "cif_method": "Two cause-specific Cox models; piecewise-constant monthly cause hazards; exact competing exponential interval update; conditional on event-free survival to delayed entry.",
-               "censoring_assumption": "Independent administrative censoring conditional on modeled covariates; IPCW G estimated on train with delayed entry.",
-               "split": "Stratified loan-level 80/20 random split within 2015 vintage; not out-of-vintage validation.",
+               "cif_method": "Two cause-specific Cox models; monthly cause-specific cumulative-hazard increments interpolated as piecewise-constant within-month hazards; competing exponential update exact conditional on that interpolation; conditional on event-free survival to delayed entry.",
+               "censoring_assumption": "IPCW reverse Kaplan-Meier estimated on train with delayed entry and conditionalized by each test loan's G(entry-); consistency requires censoring independent of event time conditional on entry (and any variables affecting censoring). This is not established; administrative censoring depends on calendar origin. A separate unweighted administrative Brier benchmark scores only observed horizon outcomes.",
+               "split": split_label,
                "features": list(x_train.columns), "preprocessing": transform, "use_cltv_sensitivity": use_cltv}
     (output_dir / "model_metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     _plot_cif(aj_full, aj_test, cal_summary_rows, figures_dir)
     return metrics
 
 
-def _plot_cif(aj_full, aj_test, pred, horizons, y_test, figures_dir):
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.step(aj_full.time_months, aj_full.cif_cause_1, where="post", label="Aalen–Johansen, full cohort")
-    ax.step(aj_test.time_months, aj_test.cif_cause_1, where="post", label="Aalen–Johansen, test")
-    mean_pred = np.nanmean(pred, axis=0)
-    ax.plot(horizons, mean_pred, "o--", label="Cause-specific Cox CIF, test mean")
-    ax.set(xlabel="Months from First Payment Date (conditional on entry)", ylabel="Cumulative incidence of first 90+ status",
-           title="90+ delinquency cumulative incidence")
-    ax.set_ylim(0, max(.02, float(aj_full.cif_cause_1.max()) * 1.15))
-    ax.grid(alpha=.25); ax.legend(); fig.tight_layout()
-    fig.savefig(figures_dir / "cif_90plus.png", dpi=160); plt.close(fig)
-
-
 def _plot_cif(aj_full, aj_test, calibration, figures_dir):
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.step(aj_full.time_months, aj_full.cif_cause_1, where="post", label="Aalen–Johansen, full cohort")
-    ax.step(aj_test.time_months, aj_test.cif_cause_1, where="post", label="Aalen–Johansen, test")
-    ax.set(xlabel="Months from First Payment Date", ylabel="Population cumulative incidence",
-           title="Observed 90+ delinquency cumulative incidence")
+    ax.step(aj_full.time_months, aj_full.cif_cause_1, where="post", label="Aalen-Johansen, full cohort")
+    ax.step(aj_test.time_months, aj_test.cif_cause_1, where="post", label="Aalen-Johansen, test")
+    ax.set(xlabel="Months from First Payment Date", ylabel="Aalen-Johansen CIF estimate",
+           title="Observed 90+ delinquency incidence in analysis cohort")
     ax.set_ylim(0, max(.02, float(aj_full.cif_cause_1.max()) * 1.15))
     ax.grid(alpha=.25); ax.legend(); fig.tight_layout()
-    fig.savefig(figures_dir / "cif_90plus.png", dpi=160); plt.close(fig)
+    fig.savefig(figures_dir / "cif_90plus_cohort.png", dpi=160); plt.close(fig)
     fig, ax = plt.subplots(figsize=(6, 6))
     pred = [r["mean_predicted_cif"] for r in calibration]
     obs = [r["observed_cif_ipcw"] for r in calibration]
@@ -790,25 +984,58 @@ def _plot_cif(aj_full, aj_test, calibration, figures_dir):
 
 
 def main() -> None:
+    config = load_analysis_config()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--orig", type=Path, default=ROOT / "sample_orig_2015.txt")
-    parser.add_argument("--perf", type=Path, default=ROOT / "sample_perf_2015.txt")
+    parser.add_argument("--orig", type=Path, default=ROOT / config["data"]["origination"])
+    parser.add_argument("--perf", type=Path, default=ROOT / config["data"]["performance"])
     parser.add_argument("--outputs", type=Path, default=ROOT / "outputs")
     parser.add_argument("--reports", type=Path, default=ROOT / "reports")
-    parser.add_argument("--bootstrap", type=int, default=100)
-    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--bootstrap", type=int, default=int(config["model"]["bootstrap_replicates"]))
+    parser.add_argument("--seed", type=int, default=int(config["model"]["seed"]))
     parser.add_argument("--cltv-sensitivity", action="store_true")
+    parser.add_argument("--tie-as-event-sensitivity", action="store_true",
+                        help="refit the same model after assigning same-month 90+/zero-balance ties to cause 1")
     args = parser.parse_args()
+    if args.cltv_sensitivity and args.tie_as_event_sensitivity:
+        parser.error("run CLTV and same-month tie sensitivities separately")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     audit = audit_data(args.orig, args.perf, args.reports)
     LOG.info("Audit complete: %d origination loans, %d performance rows", audit["origination"]["rows"], audit["performance"]["rows"])
     df, summary = build_survival_data(args.orig, args.perf, args.outputs / "survival_dataset.csv")
     (args.outputs / "survival_dataset_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    audit["survival_cohort_construction"] = summary
+    (args.reports / "data_audit.json").write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
+    audit_md = args.reports / "data_audit.md"
+    with audit_md.open("a", encoding="utf-8") as f:
+        f.write("\n## Survival cohort construction\n\n")
+        f.write(f"- Loans in source origination/performance files: {audit['origination']['unique_loan_ids']:,}.\n")
+        f.write(f"- Loans excluded because zero-balance effective date precedes First Payment Date: {summary['loans_excluded_terminal_before_time_origin']:,} ({summary['excluded_pre_origin_terminal_codes']}).\n")
+        f.write(f"- Analysis loans: {summary['n_loans']:,}; first 90+ events: {summary['primary_90plus_events']:,}; competing exits: {summary['competing_zero_balance_exits']:,}; right-censored: {summary['right_censored']:,}.\n")
+        f.write(f"- First performance month relative to First Payment Date (before/at/after): {summary['first_performance_month_relative_to_time_origin']}.\n")
+        f.write(f"- Pre-origin 90+ status rows ignored: {summary['pre_origin_90plus_rows_ignored']:,}; same-month 90+/termination ties assigned to competing exit: {summary['same_month_ambiguities_treated_as_competing']:,}.\n")
     LOG.info("Survival dataset: %s", json.dumps({k: summary[k] for k in ["n_loans", "primary_90plus_events", "competing_zero_balance_exits", "right_censored", "same_month_ambiguities_treated_as_competing", "endpoint_b_total_events"]}))
-    metrics = run_model(df, args.outputs / ("models_cltv" if args.cltv_sensitivity else "models"),
-                        args.reports / ("tables_cltv" if args.cltv_sensitivity else "tables"),
-                        args.reports / ("figures_cltv" if args.cltv_sensitivity else "figures"),
-                        seed=args.seed, bootstrap_n=args.bootstrap, use_cltv=args.cltv_sensitivity)
+    if args.tie_as_event_sensitivity:
+        primary_split_stratification = df.event_cause.to_numpy() == 1
+        ties = df.same_month_90plus_termination_tie.astype(int).eq(1)
+        if int(ties.sum()) != summary["same_month_ambiguities_treated_as_competing"]:
+            raise ArithmeticError("Tie sensitivity mask disagrees with the survival construction audit")
+        df.loc[ties, "event_cause"] = 1
+        df.loc[ties, "event_a_90plus"] = 1
+        df.loc[ties, "exit_type"] = "first_90plus_tie_sensitivity"
+    output_tag = "models_tie_sensitivity" if args.tie_as_event_sensitivity else "models_cltv" if args.cltv_sensitivity else "models"
+    table_tag = "tables_tie_sensitivity" if args.tie_as_event_sensitivity else "tables_cltv" if args.cltv_sensitivity else "tables"
+    figure_tag = "figures_tie_sensitivity" if args.tie_as_event_sensitivity else "figures_cltv" if args.cltv_sensitivity else "figures"
+    metrics = run_model(df, args.outputs / output_tag,
+                        args.reports / table_tag,
+                        args.reports / figure_tag,
+                        seed=args.seed, test_fraction=float(config["model"]["test_fraction"]),
+                        bootstrap_n=args.bootstrap, use_cltv=args.cltv_sensitivity,
+                        split_stratification=primary_split_stratification if args.tie_as_event_sensitivity else None)
+    if args.tie_as_event_sensitivity:
+        metrics["tie_sensitivity"] = {"same_month_ties_assigned_to_event": int(ties.sum()),
+                                      "primary_rule": "assign same-month zero-balance termination to competing cause"}
+        (args.outputs / output_tag / "model_metrics.json").write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     LOG.info("Model complete: C-index=%s; test CIF scores=%s", metrics["left_truncated_harrell_c_index_event_90plus"], metrics["cif_brier_scores"])
 
 

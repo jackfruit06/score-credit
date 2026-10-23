@@ -1,0 +1,6 @@
+horizon_months,cif_ipcw_brier,eligible_test_loans,test_event_90plus_by_horizon,test_competing_exits_by_horizon,censor_survival_at_horizon_pre_horizon,minimum_conditional_censor_survival,maximum_ipcw_weight,ipcw_effective_sample_size,test_censors_before_horizon,ipcw_score_defined
+12,0.0020051012268057517,7940,16,644,1.0,1.0,1.0,7940.0,0,True
+24,0.009794199316802523,7959,79,1303,1.0,1.0,1.0,7959.0,0,True
+36,0.011852662096909463,7986,97,1919,1.0,1.0,1.0,7986.0,0,True
+60,0.03807785523003559,8072,327,4057,1.0,1.0,1.0,8072.0,0,True
+120,0.04295835380799542,8072,375,5900,1.0,1.0,1.0,8052.0,20,True

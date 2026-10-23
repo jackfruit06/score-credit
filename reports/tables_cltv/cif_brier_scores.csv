@@ -1,5 +1,6 @@
-horizon_months,cif_ipcw_brier,eligible_test_loans,test_event_90plus_by_horizon,test_competing_exits_by_horizon,censor_survival_at_horizon
-12,0.0012340600739487598,9709,12,596,1.0
-24,0.004675525312211301,9725,46,1569,1.0
-36,0.008645552179326558,9741,86,2399,1.0
-60,0.024224508798447304,10000,255,4433,1.0
+horizon_months,cif_ipcw_brier,eligible_test_loans,test_event_90plus_by_horizon,test_competing_exits_by_horizon,censor_survival_at_horizon_pre_horizon,minimum_conditional_censor_survival,maximum_ipcw_weight,ipcw_effective_sample_size,test_censors_before_horizon,ipcw_score_defined
+12,0.0012334959116094364,9712,12,664,1.0,1.0,1.0,9712.0,0,True
+24,0.004672485615499768,9727,46,1608,1.0,1.0,1.0,9727.0,0,True
+36,0.008639915187885665,9741,86,2382,1.0,1.0,1.0,9741.0,0,True
+60,0.024168420207047712,9996,255,4486,1.0,1.0,1.0,9996.0,0,True
+120,0.0369755931162071,9996,397,7352,0.9987459673972235,0.9987459673972235,1.0012556071751104,9987.997237028425,8,True

@@ -14,15 +14,16 @@
   "time": {
     "origin": "First Payment Date calendar month",
     "unit": "calendar months",
-    "entry": "completed months from First Payment Date to first observed performance interval",
+    "entry": "0 when first observed performance month is on or before First Payment Date; otherwise calendar-month gap until first observed performance",
     "event_timing": "end of reported month"
   },
   "model": {
     "seed": 2026,
     "test_fraction": 0.2,
     "stratify": "primary endpoint event",
-    "evaluation_horizons_months": [12, 24, 36, 60],
+    "evaluation_horizons_months": [12, 24, 36, 60, 120],
     "bootstrap_replicates": 100,
-    "bootstrap_scope": "test-loan resampling with fitted models and preprocessing held fixed"
+    "bootstrap_scope": "test-loan resampling with fitted models and preprocessing held fixed",
+    "temporal_split_first_payment_cutoff": "201512"
   }
 }

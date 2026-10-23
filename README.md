@@ -11,16 +11,19 @@ python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python src/survival_pipeline.py --bootstrap 100
 python src/eda.py
+python src/temporal_validation.py --bootstrap 100
 ```
 
-The pipeline rebuilds the data audit and loan-level survival table, fits cause-specific Cox models, computes competing-risk CIFs and evaluation outputs, and saves a serializable model bundle. `--cltv-sensitivity` runs the prespecified sensitivity model with CLTV in place of LTV, saving to separate `outputs/models_cltv` and `reports/*_cltv` paths. Use `--orig`, `--perf`, `--outputs`, or `--reports` to change paths.
+The pipeline rebuilds the data audit and loan-level survival table, fits cause-specific Cox models, computes competing-risk CIFs and evaluation outputs, and saves a serializable model bundle. `--cltv-sensitivity` runs the prespecified sensitivity model with CLTV in place of LTV, saving to separate `outputs/models_cltv` and `reports/*_cltv` paths. `--tie-as-event-sensitivity` assigns same-month event/termination ties to cause 1 while preserving the primary train/test split, and writes separate tie-sensitivity artifacts. Run these options separately. Use `--orig`, `--perf`, `--outputs`, or `--reports` to change paths.
+
+`src/temporal_validation.py` runs the same analysis on a fixed calendar-cohort split, training on First Payment Dates through 2015-12 and evaluating later starts. This is a within-file cohort transport check, not external or prospective validation: nearly all later starts are from 2016, and the training outcomes use the full file through 2026.
 
 ## Main files
 
 - `src/survival_pipeline.py`: validation, event construction, Cox fitting, competing-risk estimation, metrics, bootstrap, plots, and scoring API.
 - `src/eda.py`: descriptive analyses and plots.
 - `config/analysis_config.json`: cohort, endpoint, time, split, and bootstrap choices.
-- `tests/test_survival_pipeline.py`: synthetic tests for endpoint rules, delayed entry, tied events, CIF mathematics, model serialization/scoring, calendar months, and hand-checked concordance.
+- `tests/test_survival_pipeline.py`: synthetic tests for endpoint rules, delayed entry, Brier boundary/support cases, tied events, CIF mathematics, model serialization/scoring, calendar months, and hand-checked concordance.
 - `docs/data_dictionary.md`, `docs/methodology.md`: variable and method definitions.
 - `reports/research_report.md`: results and interpretation; `reports/data_audit.md` and `reports/eda.md`: data checks and EDA.
 - `outputs/survival_dataset.csv`: one row per loan; `outputs/models/cause_specific_cox_models.pkl`: fitted models and training preprocessing.
@@ -29,9 +32,9 @@ Scoring new loan origination rows is available through `load_model_bundle()` and
 
 ## Method in brief
 
-The time origin is First Payment Date, measured in calendar months. Loans enter the risk set when their performance history first becomes observable (delayed entry). Cause 1 is the first monthly status `03` or higher; cause 2 is the first zero-balance termination of any code; right-censoring is cause 0. If the event and zero-balance exit occur in the same reporting month, ordering is unknowable, so the primary analysis treats the termination as competing and reports a tie sensitivity.
+The time origin is First Payment Date, measured in calendar months. Loans with a terminal zero-balance effective date before the origin are excluded; pre-origin 90+ rows are ignored. Loans whose performance history starts after the origin enter the risk set at delayed entry. Cause 1 is the first monthly status `03` or higher; cause 2 is the first zero-balance termination of any code; right-censoring is cause 0. If the event and zero-balance exit occur in the same reporting month, ordering is unknowable, so the primary analysis treats the termination as competing and reports a tie sensitivity.
 
-Two cause-specific Cox models estimate the event and competing-exit hazards. Their monthly cumulative-hazard increments are combined with an exact competing exponential update to estimate cause-specific CIFs; `1 - S_event` is not used as the event CIF. Evaluation uses delayed-entry Harrell concordance, IPCW Brier scores and calibration at 12, 24, 36, and 60 months, and fixed-model test-loan bootstrap intervals. Full details and assumptions are in `docs/methodology.md`.
+Two cause-specific Cox models estimate the event and competing-exit hazards. Their monthly cumulative-hazard increments are combined with an exact competing exponential update to estimate cause-specific CIFs; `1 - S_event` is not used as the event CIF. Evaluation uses delayed-entry Harrell concordance, IPCW Brier scores and calibration at 12, 24, 36, 60, and 120 months, and fixed-model test-loan bootstrap intervals. IPCW weights are conditionalized on delayed entry; long-horizon scores depend on independent censoring and support assumptions. Full details are in `docs/methodology.md`.
 
 ## Data and references
 

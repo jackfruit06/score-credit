@@ -58,6 +58,7 @@ The preprocessing pipeline additionally creates `log_original_upb` and `has_mort
 
 ## Derived loan-level survival table
 
+- Loans with zero-balance effective dates before First Payment Date are excluded because the terminal event precedes the declared time origin; exclusion counts and codes appear in the survival construction audit. Pre-origin 90+ rows are not counted as at-risk events.
 - `event_time_months`: calendar month distance from First Payment Date plus one, so the first payment month is month 1; terminal date month is used for zero-balance exits when available.
 - `delayed_entry_months`: months from First Payment Date until the first observed performance month. A loan contributes to risk sets only after entry.
 - `event_cause`: `0` right-censored at the last observed month, `1` first observed delinquency status `03+`, `2` first zero-balance exit of any code.

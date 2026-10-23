@@ -50,6 +50,8 @@ def run_eda(data_path: Path, reports: Path, outputs: Path) -> None:
                                    "p75": float(df.event_time_months.quantile(.75)), "max": int(df.event_time_months.max())},
                "missing_pct_after_sentinel_conversion": {c: float(df[c].isna().mean()) for c in num}}
     (table_dir / "eda_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    construction_path = outputs / "survival_dataset_summary.json"
+    construction = json.loads(construction_path.read_text(encoding="utf-8")) if construction_path.exists() else {}
     # Follow-up distribution.
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.hist(df.event_time_months, bins=np.arange(0, df.event_time_months.max() + 6, 6), color="#477998", edgecolor="white")
@@ -87,6 +89,8 @@ def run_eda(data_path: Path, reports: Path, outputs: Path) -> None:
     text = ["# Exploratory data analysis", "",
             f"The cohort contains {len(df):,} loans. Event causes are coded 0=right-censored, 1=first 90+ delinquency, and 2=zero-balance termination.",
             f"Cause counts: {summary['cause_counts']}. Delayed entry applies to {summary['delayed_entry_n']:,} loans.",
+            f"Loans excluded for zero-balance effective dates before First Payment Date: {construction.get('loans_excluded_terminal_before_time_origin', 'not recorded')}.",
+            f"First performance month relative to First Payment Date: {construction.get('first_performance_month_relative_to_time_origin', 'not recorded')}.",
             f"Median observed follow-up is {summary['followup_months']['median']:.0f} months; maximum is {summary['followup_months']['max']} months.",
             "Special codes were converted to missing only for documented fields. VantageScore 4.0 is entirely unavailable in this cohort.",
             "The Kaplan–Meier plot treats competing exits as censored and describes cause-specific net survival. The Aalen–Johansen plot estimates observed CIFs under delayed-entry risk sets.",

@@ -1,0 +1,7 @@
+dimension,group,n_loans,primary_events,competing_events,right_censored,delayed_entry_n,median_followup_months,max_followup_months
+first_payment_year,2015,41908,1642,31377,8889,2310,63.0,134
+first_payment_year,2016,8060,377,5918,1765,419,58.0,123
+first_payment_year,2017+,12,0,10,2,7,42.0,111
+delayed_entry_months,0,47244,1938,35295,10011,0,62.0,134
+delayed_entry_months,1-2,1182,45,883,254,1182,63.0,133
+delayed_entry_months,3+,1554,36,1127,391,1554,67.0,133
