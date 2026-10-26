@@ -1,6 +1,0 @@
-metric,horizon_months,successful_replicates,bootstrap_mean,ci_2_5,ci_97_5,scope
-cif_ipcw_brier,12.0,20,0.0012746538529741268,0.0007690012844946319,0.0017513808205529846,fixed fitted models; resampled test loans only
-cif_ipcw_brier,24.0,20,0.004762723694929988,0.003345865440662174,0.005771353231364971,fixed fitted models; resampled test loans only
-cif_ipcw_brier,36.0,20,0.008412060763413233,0.0068086742173586005,0.009829148938907508,fixed fitted models; resampled test loans only
-cif_ipcw_brier,60.0,20,0.02412187520259929,0.02228174164018434,0.02592245678481421,fixed fitted models; resampled test loans only
-left_truncated_c_index,,20,0.7558527600975881,0.7305157483993798,0.7788690794748884,fixed fitted models; resampled test loans only
