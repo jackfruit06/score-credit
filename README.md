@@ -15,18 +15,6 @@ python src/eda.py
 
 The pipeline rebuilds the data audit and loan-level survival table, fits cause-specific Cox models, computes competing-risk CIFs and evaluation outputs, and saves a serializable model bundle. `--cltv-sensitivity` runs the prespecified sensitivity model with CLTV in place of LTV, saving to separate `outputs/models_cltv` and `reports/*_cltv` paths. Use `--orig`, `--perf`, `--outputs`, or `--reports` to change paths.
 
-## Main files
-
-- `src/survival_pipeline.py`: validation, event construction, Cox fitting, competing-risk estimation, metrics, bootstrap, plots, and scoring API.
-- `src/eda.py`: descriptive analyses and plots.
-- `config/analysis_config.json`: cohort, endpoint, time, split, and bootstrap choices.
-- `tests/test_survival_pipeline.py`: synthetic tests for endpoint rules, delayed entry, tied events, CIF mathematics, model serialization/scoring, calendar months, and hand-checked concordance.
-- `docs/data_dictionary.md`, `docs/methodology.md`: variable and method definitions.
-- `reports/research_report.md`: results and interpretation; `reports/data_audit.md` and `reports/eda.md`: data checks and EDA.
-- `outputs/survival_dataset.csv`: one row per loan; `outputs/models/cause_specific_cox_models.pkl`: fitted models and training preprocessing.
-
-Scoring new loan origination rows is available through `load_model_bundle()` and `score_new_loans()` in `src/survival_pipeline.py`. Scores are conditional on remaining event-free through each loan's delayed-entry month. Do not apply this model outside the documented 2015 Freddie Mac sample without validation.
-
 ## Method in brief
 
 The time origin is First Payment Date, measured in calendar months. Loans enter the risk set when their performance history first becomes observable (delayed entry). Cause 1 is the first monthly status `03` or higher; cause 2 is the first zero-balance termination of any code; right-censoring is cause 0. If the event and zero-balance exit occur in the same reporting month, ordering is unknowable, so the primary analysis treats the termination as competing and reports a tie sensitivity.
