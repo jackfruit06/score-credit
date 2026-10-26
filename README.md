@@ -70,7 +70,7 @@ Các thư mục con trong `outputs/` và `reports/` có ý nghĩa như sau:
 | `reports/tables*/` | Hệ số Cox, baseline hazard, CIF, Brier, calibration, bootstrap và chẩn đoán. Hậu tố chỉ nhánh temporal hoặc sensitivity tương ứng. |
 | `reports/figures*/` | Đồ thị CIF và calibration của từng nhánh. |
 
-## Kết quả được đưa lên GitHub
+## Kết quả  
 
 [`.gitignore`](.gitignore) dùng allowlist để chỉ công bố các kết quả tổng hợp của lần chạy đầy đủ gần nhất ngày **2026-10-24**. Repository trên GitHub được tổ chức thành bốn nhóm sau.
 
@@ -95,12 +95,7 @@ Các thư mục con trong `outputs/` và `reports/` có ý nghĩa như sau:
 | [`docs/methodology.md`](docs/methodology.md) | Giải thích mô hình Cox, competing risks, delayed entry, CIF và metric. |
 | [`docs/provenance_data.md`](docs/provenance_data.md) | Nguồn, schema và SHA-256 của dữ liệu. |
 
-### Dữ liệu đầu vào chỉ lưu local
-
-Ba tệp dữ liệu không được đưa lên GitHub và không có link tải trực tiếp trong repository. Sau khi clone source, người chạy cần tự lấy dữ liệu theo điều khoản của Freddie Mac, đặt `sample_orig_2015.txt`, `sample_perf_2015.txt` và `sample_2015.zip` vào thư mục gốc, sau đó đối chiếu SHA-256 trong [`docs/provenance_data.md`](docs/provenance_data.md).
-
-Các rule `/sample_2015.zip`, `/sample_orig_2015.txt` và `/sample_perf_2015.txt` trong [`.gitignore`](.gitignore) ngăn ba file này được thêm mới bằng thao tác Git thông thường.
-
+ 
 ### Kết quả của lần chạy gần nhất
 
 Các file dưới đây là kết quả được phép đưa lên GitHub. Kết quả lịch sử trong `outputs/experiments/` không thuộc allowlist.
@@ -125,9 +120,6 @@ Các bảng kết quả được chia theo nhánh:
 | Temporal: [`cif_brier_scores.csv`](reports/tables_temporal_validation/cif_brier_scores.csv) | Thư mục `reports/tables_temporal_validation/` có 15 bảng, gồm kết quả temporal và phân bố entry theo cohort. |
 | CLTV: [`cif_brier_scores.csv`](reports/tables_cltv/cif_brier_scores.csv) | Thư mục `reports/tables_cltv/` có 13 bảng của CLTV sensitivity. |
 | Tie: [`cif_brier_scores.csv`](reports/tables_tie_sensitivity/cif_brier_scores.csv) | Thư mục `reports/tables_tie_sensitivity/` có 13 bảng của tie sensitivity. |
-
-Các bảng primary thường dùng khi viết báo cáo:
-
 - [`cox_event_90plus_coefficients.csv`](reports/tables/cox_event_90plus_coefficients.csv): hệ số, hazard ratio, khoảng tin cậy và p-value của biến cố 90+.
 - [`cox_any_zero_balance_exit_coefficients.csv`](reports/tables/cox_any_zero_balance_exit_coefficients.csv): kết quả mô hình competing event.
 - [`cif_brier_scores.csv`](reports/tables/cif_brier_scores.csv): IPCW Brier theo horizon.
@@ -144,8 +136,6 @@ Các hình được chia tương ứng:
 | Temporal: [`cif_90plus_cohort.png`](reports/figures_temporal_validation/cif_90plus_cohort.png) | CIF và calibration của temporal validation. |
 | CLTV: [`cif_90plus_cohort.png`](reports/figures_cltv/cif_90plus_cohort.png) | CIF và calibration của CLTV sensitivity. |
 | Tie: [`cif_90plus_cohort.png`](reports/figures_tie_sensitivity/cif_90plus_cohort.png) | CIF và calibration của tie sensitivity. |
-
-Các file dung lượng lớn hoặc chứa dữ liệu cấp khoản vay không được đưa lên: `survival_dataset.csv`, `survival_dataset.exclusions.csv`, `test_predictions.csv`, `split_membership.csv`, model pickle và toàn bộ `outputs/experiments/`. Chúng có thể được tạo lại bằng các lệnh bên dưới.
 
 ## Cài đặt
 
