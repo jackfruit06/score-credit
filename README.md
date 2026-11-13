@@ -13,13 +13,6 @@ python src/survival_pipeline.py --bootstrap 100
 python src/eda.py
 ```
 
-The pipeline rebuilds the data audit and loan-level survival table, fits cause-specific Cox models, computes competing-risk CIFs and evaluation outputs, and saves a serializable model bundle. `--cltv-sensitivity` runs the prespecified sensitivity model with CLTV in place of LTV, saving to separate `outputs/models_cltv` and `reports/*_cltv` paths. Use `--orig`, `--perf`, `--outputs`, or `--reports` to change paths.
-
-## Method in brief
-
-The time origin is First Payment Date, measured in calendar months. Loans enter the risk set when their performance history first becomes observable (delayed entry). Cause 1 is the first monthly status `03` or higher; cause 2 is the first zero-balance termination of any code; right-censoring is cause 0. If the event and zero-balance exit occur in the same reporting month, ordering is unknowable, so the primary analysis treats the termination as competing and reports a tie sensitivity.
-
-Two cause-specific Cox models estimate the event and competing-exit hazards. Their monthly cumulative-hazard increments are combined with an exact competing exponential update to estimate cause-specific CIFs; `1 - S_event` is not used as the event CIF. Evaluation uses delayed-entry Harrell concordance, IPCW Brier scores and calibration at 12, 24, 36, and 60 months, and fixed-model test-loan bootstrap intervals. Full details and assumptions are in `docs/methodology.md`.
 
 ## Data and references
 
